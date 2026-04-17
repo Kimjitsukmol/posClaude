@@ -13,6 +13,23 @@ const SUPABASE_ANON = 'sb_publishable_swcv3sHOzdEyuvqhlnf-4g_cMzWIx9y';         
 const _supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ============================================================
+// 📱 DEVICE DETECTION
+// ============================================================
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const HAS_BLUETOOTH = typeof navigator.bluetooth !== 'undefined';
+
+// แสดง alert แบบ iOS-friendly เมื่อ Bluetooth ไม่รองรับ
+function showIOSNoPrintAlert() {
+    showCustomAlert(
+        '🍎 iPad ไม่รองรับการปริ้นผ่าน Bluetooth',
+        'Apple บล็อก Web Bluetooth บน iOS/iPadOS ทุกรุ่น\n\n' +
+        '✅ วิธีแก้: ใช้ Android (Xiaomi Pad 7) เพื่อปริ้นใบเสร็จ\n' +
+        'iPad ยังคงใช้งาน POS ได้ปกติทุกอย่าง ยกเว้นปริ้นเท่านั้น'
+    );
+}
+
+// ============================================================
 // 📦 GLOBAL VARIABLES
 // ============================================================
 let menuData      = [];
@@ -290,6 +307,10 @@ async function buildReceiptBytes(bill) {
 
 // ── ปริ้นทดสอบ ──
 async function testPrint() {
+    if (IS_IOS || !HAS_BLUETOOTH) {
+        showIOSNoPrintAlert();
+        return;
+    }
     if (!PRINTER.isConnected()) {
         const ok = await PRINTER.connect();
         if (!ok) return;
@@ -311,10 +332,6 @@ async function testPrint() {
 
 // ฟังก์ชัน print หลัก — ใช้ได้จากทุกที่
 async function printReceipt(billData) {
-    if (!navigator.bluetooth) {
-        showCustomAlert('ไม่รองรับ', 'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth\nกรุณาใช้ Chrome บน Android');
-        return;
-    }
     try {
         showToast('กำลังส่งข้อมูลไปปริ้น...', 'warning');
         const bytes = await buildReceiptBytes(billData);   // ← await (async)
@@ -336,6 +353,12 @@ function updatePrinterStatusUI(connected) {
         const dotEl  = document.getElementById(dot);
         const textEl = document.getElementById(text);
         if (!dotEl || !textEl) return;
+        // บน iOS แสดงสถานะว่าไม่รองรับ
+        if (IS_IOS || !HAS_BLUETOOTH) {
+            dotEl.className  = 'w-2 h-2 rounded-full bg-gray-300';
+            textEl.innerText = 'iPad ไม่รองรับ Bluetooth';
+            return; // return ใน forEach แทน continue
+        }
         if (connected) {
             dotEl.className  = 'w-2 h-2 rounded-full bg-green-400 animate-pulse';
             dotEl.style.width = dotEl.style.height = dot === 'printerStatusDot3' ? '12px' : '';
@@ -348,7 +371,14 @@ function updatePrinterStatusUI(connected) {
     // navbar button
     const btn = document.getElementById('btnConnectPrinter');
     if (btn) {
+        // iOS: แสดงไอคอน disabled
+        if (IS_IOS || !HAS_BLUETOOTH) {
+            btn.innerHTML = '<i class="fas fa-bluetooth text-gray-500 opacity-40"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-50">ปริ้น</span><span class="text-[10px] opacity-50">iPad ไม่รองรับ</span></span>';
+            btn.style.opacity = '0.6';
+            return;
+        }
         const name = PRINTER.device?.name || 'เชื่อมต่อแล้ว';
+        btn.style.opacity = '1';
         btn.innerHTML = connected
             ? `<i class="fas fa-bluetooth text-blue-400"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-70">เครื่องปริ้น</span><span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span class="text-[10px]">${name}</span></span></span>`
             : `<i class="fas fa-bluetooth text-gray-400"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-70">เครื่องปริ้น</span><span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-gray-400"></span><span class="text-[10px]">ยังไม่เชื่อมต่อ</span></span></span>`;
@@ -356,6 +386,10 @@ function updatePrinterStatusUI(connected) {
 }
 
 async function togglePrinterConnection() {
+    if (IS_IOS || !HAS_BLUETOOTH) {
+        showIOSNoPrintAlert();
+        return;
+    }
     if (PRINTER.isConnected()) { await PRINTER.disconnect(); }
     else { await PRINTER.connect(); }
 }
