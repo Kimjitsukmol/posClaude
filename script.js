@@ -530,33 +530,47 @@ function updatePrinterStatusUI(connected) {
         if (!dotEl || !textEl) return;
         // บน iOS แสดงสถานะว่าไม่รองรับ
         if (IS_IOS || !HAS_BLUETOOTH) {
-            dotEl.className  = 'w-2 h-2 rounded-full bg-gray-300';
+            // สำหรับ dot ใน navbar (printerStatusDot) — ใช้ขนาดเล็ก 1.5
+            if (dot === 'printerStatusDot') {
+                dotEl.className = 'absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-gray-300 ring-1 ring-white/80';
+            } else {
+                dotEl.className  = 'w-2 h-2 rounded-full bg-gray-300';
+            }
             textEl.innerText = 'iPad ไม่รองรับ Bluetooth';
             return; // return ใน forEach แทน continue
         }
         if (connected) {
-            dotEl.className  = 'w-2 h-2 rounded-full bg-green-400 animate-pulse';
-            dotEl.style.width = dotEl.style.height = dot === 'printerStatusDot3' ? '12px' : '';
+            if (dot === 'printerStatusDot') {
+                // navbar: จุดเล็กๆ สีเขียว pulse
+                dotEl.className = 'absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse ring-1 ring-white/80';
+            } else {
+                dotEl.className  = 'w-2 h-2 rounded-full bg-green-400 animate-pulse';
+                dotEl.style.width = dotEl.style.height = dot === 'printerStatusDot3' ? '12px' : '';
+            }
             textEl.innerText = PRINTER.device?.name || 'เชื่อมต่อแล้ว';
         } else {
-            dotEl.className  = 'w-2 h-2 rounded-full bg-gray-400';
+            if (dot === 'printerStatusDot') {
+                dotEl.className = 'absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-gray-400 ring-1 ring-white/80';
+            } else {
+                dotEl.className  = 'w-2 h-2 rounded-full bg-gray-400';
+            }
             textEl.innerText = dot === 'printerStatusDot2' ? 'เครื่องปริ้นยังไม่เชื่อมต่อ' : 'ยังไม่เชื่อมต่อ';
         }
     });
-    // navbar button
+    // navbar button — ไม่เขียนทับ innerHTML (รักษา layout icon-only ไว้), แค่ปรับ opacity/tooltip
     const btn = document.getElementById('btnConnectPrinter');
     if (btn) {
         // iOS: แสดงไอคอน disabled
         if (IS_IOS || !HAS_BLUETOOTH) {
-            btn.innerHTML = '<i class="fas fa-bluetooth text-gray-500 opacity-40"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-50">ปริ้น</span><span class="text-[10px] opacity-50">iPad ไม่รองรับ</span></span>';
-            btn.style.opacity = '0.6';
+            btn.style.opacity = '0.5';
+            btn.title = 'iPad ไม่รองรับ Bluetooth';
             return;
         }
-        const name = PRINTER.device?.name || 'เชื่อมต่อแล้ว';
         btn.style.opacity = '1';
-        btn.innerHTML = connected
-            ? `<i class="fas fa-bluetooth text-blue-400"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-70">เครื่องปริ้น</span><span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span><span class="text-[10px]">${name}</span></span></span>`
-            : `<i class="fas fa-bluetooth text-gray-400"></i><span class="hidden sm:flex flex-col items-start leading-none gap-0.5"><span class="text-[10px] font-normal opacity-70">เครื่องปริ้น</span><span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-gray-400"></span><span class="text-[10px]">ยังไม่เชื่อมต่อ</span></span></span>`;
+        const name = PRINTER.device?.name;
+        btn.title = connected
+            ? `เครื่องปริ้น: ${name || 'เชื่อมต่อแล้ว'}`
+            : 'เครื่องปริ้น: ยังไม่เชื่อมต่อ';
     }
 }
 
@@ -620,13 +634,24 @@ async function printBillDetail(index) {
 async function dbGetAll(table) {
     const map = { menu: 'products', orders: 'orders', history: 'bills', settings: 'settings' };
     const t = map[table] || table;
-    const { data, error } = await _supa.from(t).select('*');
-    if (error) throw error;
-    if (t === 'products')  return data.map(rowToProduct);
-    if (t === 'orders')    return data.map(rowToOrder);
-    if (t === 'bills')     return data.map(rowToBill);
-    if (t === 'settings')  return data;
-    return data;
+    // ✅ paginate: ดึงทีละ 1000 จนครบทุกแถว (แก้ปัญหา Supabase default limit 1000)
+    const PAGE_SIZE = 1000;
+    let all = [];
+    let from = 0;
+    while (true) {
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await _supa.from(t).select('*').range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+    }
+    if (t === 'products')  return all.map(rowToProduct);
+    if (t === 'orders')    return all.map(rowToOrder);
+    if (t === 'bills')     return all.map(rowToBill);
+    if (t === 'settings')  return all;
+    return all;
 }
 
 async function dbGet(table, key) {
@@ -1845,26 +1870,57 @@ async function openSalesModal() {
     document.getElementById('saleToday').innerText = '...'; document.getElementById('saleYest').innerText = '...'; document.getElementById('saleMonth').innerText = '...';
     if (salesModalTimer) clearTimeout(salesModalTimer);
     try {
-        const history = await dbGetAll('history');
-        let today = 0, yesterday = 0, month = 0;
+        // ✅ คำนวณช่วงเวลาเดือนนี้ (ครอบคลุมทั้ง "วันนี้" และ "เมื่อวาน" อยู่แล้ว)
         const now = new Date();
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+        const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0); // exclusive
+        // เผื่อเมื่อวาน = วันที่ 1 ของเดือนที่แล้ว: ขยาย lower bound ไปครอบคลุมเมื่อวานด้วย
         const yestDate = new Date(now.getTime() - 86400000);
-        const yestStr = `${yestDate.getFullYear()}-${String(yestDate.getMonth()+1).padStart(2,'0')}-${String(yestDate.getDate()).padStart(2,'0')}`;
+        const lowerBound = new Date(Math.min(monthStart.getTime(), new Date(yestDate.getFullYear(), yestDate.getMonth(), yestDate.getDate()).getTime()));
+
+        // ✅ query เฉพาะช่วงเวลาที่ต้องใช้ + ดึงทีละ page เผื่อบิลเยอะเกิน 1000 ในเดือน
+        const bills = await fetchBillsInRange(lowerBound.toISOString(), monthEnd.toISOString());
+
+        let today = 0, yesterday = 0, month = 0;
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+        const yestStr  = `${yestDate.getFullYear()}-${String(yestDate.getMonth()+1).padStart(2,'0')}-${String(yestDate.getDate()).padStart(2,'0')}`;
         const monthStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-        history.forEach(b => {
+        bills.forEach(b => {
             const localBDate = new Date(b.date);
             const bDateStr = `${localBDate.getFullYear()}-${String(localBDate.getMonth()+1).padStart(2,'0')}-${String(localBDate.getDate()).padStart(2,'0')}`;
             const bMonthStr = `${localBDate.getFullYear()}-${String(localBDate.getMonth()+1).padStart(2,'0')}`;
-            if (bDateStr === todayStr) today += parseFloat(b.total || 0);
-            if (bDateStr === yestStr) yesterday += parseFloat(b.total || 0);
-            if (bMonthStr === monthStr) month += parseFloat(b.total || 0);
+            const t = parseFloat(b.total || 0);
+            if (bDateStr === todayStr) today += t;
+            if (bDateStr === yestStr) yesterday += t;
+            if (bMonthStr === monthStr) month += t;
         });
         document.getElementById('saleToday').innerText = today.toLocaleString();
         document.getElementById('saleYest').innerText = yesterday.toLocaleString();
         document.getElementById('saleMonth').innerText = month.toLocaleString();
         salesModalTimer = setTimeout(() => { closeModal('salesModal'); }, 5000);
-    } catch(e) {}
+    } catch(e) { console.error('openSalesModal error:', e); }
+}
+
+// ✅ ดึงบิลในช่วงเวลาที่กำหนด โดยแบ่ง page เพื่อข้าม limit 1000 ของ Supabase
+async function fetchBillsInRange(startISO, endISO) {
+    const PAGE_SIZE = 1000;
+    let all = [];
+    let from = 0;
+    while (true) {
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await _supa.from('bills')
+            .select('*')
+            .gte('date', startISO)
+            .lt('date', endISO)
+            .order('date', { ascending: false })
+            .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+    }
+    return all;
 }
 
 async function openHistoryModal() {
@@ -1872,13 +1928,18 @@ async function openHistoryModal() {
     const list = document.getElementById('historyList');
     list.innerHTML = '<tr><td colspan="3" class="text-center p-10 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl mb-2"></i><br>กำลังโหลดรายการ...</td></tr>';
     try {
-        const data = await dbGetAll('history');
-        data.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        historyBills = data.slice(0, 200);
+        // ✅ ให้ Supabase เรียงและจำกัดจำนวนมาเลย — จะได้บิลล่าสุด 200 รายการจริง
+        const { data, error } = await _supa.from('bills')
+            .select('*')
+            .order('date', { ascending: false })
+            .limit(200);
+        if (error) throw error;
+        historyBills = (data || []).map(rowToBill);
         renderHistoryList();
         const badgeCount = document.querySelector('#historyModal h3 span');
         if (badgeCount) badgeCount.innerText = `ล่าสุด ${historyBills.length} บิล`;
     } catch(e) {
+        console.error('openHistoryModal error:', e);
         list.innerHTML = '<tr><td colspan="3" class="text-center p-4 text-red-400">โหลดข้อมูลไม่ได้</td></tr>';
     }
 }
@@ -2369,8 +2430,9 @@ async function executeExportPDF() {
     if (!start || !end) { showToast('กรุณาเลือกวันที่ให้ครบ','warning'); return; }
     setLoading('btnDoExport', true, 'สร้างรายงาน...');
     try {
-        const { data: allHistory } = await _supa.from('bills').select('*').gte('date', start+'T00:00:00').lte('date', end+'T23:59:59').order('date');
-        const filtered = allHistory || [];
+        // ✅ ใช้ pagination เผื่อช่วงที่เลือกมีบิลเกิน 1000
+        const filtered = await fetchBillsInRange(start+'T00:00:00', end+'T23:59:59.999');
+        filtered.sort((a,b) => new Date(a.date) - new Date(b.date));
         let title = type === 'MonthlySales' ? 'รายงานสรุปยอดขายรายเดือน' : type === 'DailySales' ? 'รายงานสรุปยอดขายรายวัน' : 'รายงานรายละเอียดบิลขาย';
         let htmlContent = `<html><head><title>${title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');body{font-family:'Sarabun',sans-serif;padding:40px;color:#333;}.header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px;}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px;}th,td{border:1px solid #cbd5e1;padding:10px;text-align:left;}th{background:#f8fafc;font-weight:bold;text-align:center;}.text-right{text-align:right;}.text-center{text-align:center;}.total-row{font-weight:bold;background:#f1f5f9;}</style></head><body><div class="header"><h1>${title}</h1><p>ข้อมูลตั้งแต่ ${start} ถึง ${end}</p></div>`;
         if (type === 'DailySales' || type === 'MonthlySales') {
@@ -2430,42 +2492,337 @@ function updateSlipChange() {
 // ============================================================
 let mySalesChart=null, mySales7DaysChart=null, myTop5PieChart=null;
 
+// เก็บ chart instances ไว้เพื่อ destroy ก่อนสร้างใหม่ (ป้องกัน memory leak)
+let myTop3PieChart = null;
+
 async function openDashboardModal() {
     closeModal('exportModal');
     document.getElementById('dashboardModal').classList.remove('hidden');
     document.getElementById('dashLoading').classList.remove('hidden');
     document.getElementById('dashContent').classList.add('hidden');
+
     try {
-        const { data: history } = await _supa.from('bills').select('*').order('date', { ascending: false }).limit(1000);
+        const now = new Date();
         const profitInput = document.getElementById('dashProfitInput');
         const profitMarginVal = profitInput ? parseFloat(profitInput.value)||12.5 : 12.5;
         const profitPercent = profitMarginVal / 100;
-        const label1 = document.getElementById('dashProfitLabel1'); const label2 = document.getElementById('dashProfitLabel2');
-        if(label1) label1.innerText = profitMarginVal; if(label2) label2.innerText = profitMarginVal;
-        const now = new Date(); const todayStr = now.toISOString().split('T')[0];
-        const yesterday = new Date(now.getTime() - 86400000); const yesterdayStr = yesterday.toISOString().split('T')[0];
-        const currentYear = now.getFullYear(); const currentMonth = now.getMonth(); const thisMonthStr = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}`;
-        let todaySales=0,todayProfit=0,yesterdaySales=0,thisMonthSales=0,thisMonthProfit=0;
-        (history||[]).forEach(b => {
-            const bDate = b.date.split('T')[0]; const bMonth = b.date.substring(0,7);
-            const t = parseFloat(b.total||0); const p = t * profitPercent;
-            if(bDate===todayStr){todaySales+=t;todayProfit+=p;}
-            if(bDate===yesterdayStr)yesterdaySales+=t;
-            if(bMonth===thisMonthStr){thisMonthSales+=t;thisMonthProfit+=p;}
-        });
+        const label1 = document.getElementById('dashProfitLabel1');
+        const label2 = document.getElementById('dashProfitLabel2');
+        if(label1) label1.innerText = profitMarginVal;
+        if(label2) label2.innerText = profitMarginVal;
+
+        // ── ช่วงเวลาที่สนใจ ──
+        // เดือนนี้
+        const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+        const thisMonthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0);
+        // เดือนที่แล้ว
+        const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
+        const lastMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+        // 7 วันย้อนหลัง
+        const sevenDaysAgo = new Date(now.getTime() - 6 * 86400000);
+        sevenDaysAgo.setHours(0,0,0,0);
+
+        // ── ขอบเขตต่ำสุดของ query บิลรายละเอียด (บิลเดือนนี้ + เดือนที่แล้ว + 7 วัน) ──
+        const detailLower = new Date(Math.min(lastMonthStart.getTime(), sevenDaysAgo.getTime()));
+        const detailUpper = thisMonthEnd;
+
+        // ── Query 1: ดึงบิลช่วงเดือนที่แล้วถึงเดือนนี้ (ใช้สำหรับสรุปวัน/เดือน/Top items/peak hours) ──
+        const history = await fetchBillsInRange(detailLower.toISOString(), detailUpper.toISOString());
+
+        // ── Query 2 (parallel): ดึงยอดรวมรายเดือนสำหรับกราฟปีนี้ (ม.ค. ถึงเดือนปัจจุบัน) ──
+        // เพื่อประหยัด bandwidth: ดึงเฉพาะคอลัมน์ date, total
+        const yearlyMonthlyDataPromise = fetchYearlyMonthlyTotals(now.getFullYear());
+
+        // ── helpers ──
         const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.innerText = val; };
-        setEl('dashTodaySales', todaySales.toLocaleString()); setEl('dashTodayProfit', todayProfit.toLocaleString());
-        setEl('dashYestSales', yesterdaySales.toLocaleString()); setEl('dashMonthSales', thisMonthSales.toLocaleString());
-        setEl('dashMonthProfit', thisMonthProfit.toLocaleString());
-        // --- 7 day chart ---
-        const labels7=[],salesData7=[],profitData7=[];
-        for(let i=6;i>=0;i--){const d=new Date(now.getTime()-i*86400000);const ds=d.toISOString().split('T')[0];const day=d.toLocaleDateString('th-TH',{weekday:'short'});labels7.push(day);const daySales=(history||[]).filter(b=>b.date.split('T')[0]===ds).reduce((s,b)=>s+parseFloat(b.total||0),0);salesData7.push(daySales);profitData7.push(daySales*profitPercent);}
+        const fmtDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const todayStr = fmtDate(now);
+        const yesterday = new Date(now.getTime() - 86400000);
+        const yesterdayStr = fmtDate(yesterday);
+        const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+        const lastMonthStr = `${lastMonthStart.getFullYear()}-${String(lastMonthStart.getMonth()+1).padStart(2,'0')}`;
+        const thaiMonthNames = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+
+        // ── (1) วันนี้ / เมื่อวาน / เดือนนี้ / เดือนที่แล้ว ──
+        let todaySales=0, todayProfit=0, todayBillsCount=0;
+        let yesterdaySales=0;
+        let thisMonthSales=0, thisMonthProfit=0;
+        let lastMonthSales=0, lastMonthProfit=0;
+        const thisMonthBills = [];
+        const lastMonthBills = [];
+
+        (history||[]).forEach(b => {
+            if (!b.date) return;
+            const localDate = new Date(b.date);
+            const bDateStr  = fmtDate(localDate);
+            const bMonthStr = `${localDate.getFullYear()}-${String(localDate.getMonth()+1).padStart(2,'0')}`;
+            const t = parseFloat(b.total||0);
+            const p = t * profitPercent;
+            if (bDateStr === todayStr)     { todaySales += t; todayProfit += p; todayBillsCount++; }
+            if (bDateStr === yesterdayStr) { yesterdaySales += t; }
+            if (bMonthStr === thisMonthStr) { thisMonthSales += t; thisMonthProfit += p; thisMonthBills.push(b); }
+            if (bMonthStr === lastMonthStr) { lastMonthSales += t; lastMonthProfit += p; lastMonthBills.push(b); }
+        });
+
+        setEl('dashTodaySales',  todaySales.toLocaleString());
+        setEl('dashTodayProfit', Math.round(todayProfit).toLocaleString());
+        setEl('dashTodayBills',  todayBillsCount.toLocaleString());
+        setEl('dashYestSales',   yesterdaySales.toLocaleString());
+        setEl('dashMonthSales',  thisMonthSales.toLocaleString());
+        setEl('dashMonthProfit', Math.round(thisMonthProfit).toLocaleString());
+        setEl('dashLastMonthSales',  lastMonthSales.toLocaleString());
+        setEl('dashLastMonthProfit', Math.round(lastMonthProfit).toLocaleString());
+        setEl('lastMonthNameLabel', `${thaiMonthNames[lastMonthStart.getMonth()]} ${lastMonthStart.getFullYear()+543}`);
+        setEl('thisMonthNameLabel', `${thaiMonthNames[now.getMonth()]} ${now.getFullYear()+543}`);
+
+        // ── (2) กราฟ 7 วันย้อนหลัง ──
+        const labels7=[], salesData7=[], profitData7=[];
+        for (let i=6; i>=0; i--) {
+            const d = new Date(now.getTime() - i*86400000);
+            const ds = fmtDate(d);
+            labels7.push(d.toLocaleDateString('th-TH',{weekday:'short'}));
+            const daySales = (history||[]).filter(b=>b.date && fmtDate(new Date(b.date))===ds)
+                                          .reduce((s,b)=>s+parseFloat(b.total||0),0);
+            salesData7.push(daySales);
+            profitData7.push(Math.round(daySales*profitPercent));
+        }
         const avgArr7 = salesData7.filter(x=>x>0);
-        setEl('avg7Days','เฉลี่ย: '+(avgArr7.length>0?Math.round(avgArr7.reduce((a,b)=>a+b,0)/avgArr7.length).toLocaleString():0)+' ฿/วัน');
-        if(mySales7DaysChart){mySales7DaysChart.destroy();}const ctx7=document.getElementById('sales7DaysChart');
-        if(ctx7){mySales7DaysChart=new Chart(ctx7,{type:'bar',data:{labels:labels7,datasets:[{label:'ยอดขาย',data:salesData7,backgroundColor:'rgba(59,130,246,0.7)'},{label:'กำไรประมาณ',data:profitData7,backgroundColor:'rgba(16,185,129,0.5)'}]},options:{responsive:true,maintainAspectRatio:false}});}
-        document.getElementById('dashLoading').classList.add('hidden'); document.getElementById('dashContent').classList.remove('hidden');
-    } catch(e) { document.getElementById('dashLoading').classList.add('hidden'); showCustomAlert('Error','โหลด Dashboard ไม่สำเร็จ: '+e.message); }
+        setEl('avg7Days','เฉลี่ย: '+(avgArr7.length>0 ? Math.round(avgArr7.reduce((a,b)=>a+b,0)/avgArr7.length).toLocaleString() : 0)+' ฿/วัน');
+        if (mySales7DaysChart) mySales7DaysChart.destroy();
+        const ctx7 = document.getElementById('sales7DaysChart');
+        if (ctx7) {
+            mySales7DaysChart = new Chart(ctx7, {
+                type:'bar',
+                data:{ labels:labels7, datasets:[
+                    { label:'ยอดขาย', data:salesData7, backgroundColor:'rgba(59,130,246,0.7)' },
+                    { label:'กำไรประมาณ', data:profitData7, backgroundColor:'rgba(16,185,129,0.5)' }
+                ]},
+                options:{ responsive:true, maintainAspectRatio:false }
+            });
+        }
+
+        // ── (3) กราฟปีนี้ (ตั้งแต่ ม.ค.) ──
+        const yearlyData = await yearlyMonthlyDataPromise; // [{month:1, total:xxx}, ...]
+        const monthsPassed = now.getMonth() + 1; // 1..12
+        const labelsY = [], salesDataY = [], profitDataY = [];
+        for (let m = 1; m <= monthsPassed; m++) {
+            labelsY.push(thaiMonthNames[m-1]);
+            const found = yearlyData.find(x => x.month === m);
+            const total = found ? found.total : 0;
+            salesDataY.push(total);
+            profitDataY.push(Math.round(total * profitPercent));
+        }
+        const avgM = salesDataY.filter(x=>x>0);
+        setEl('avgMonthly', 'เฉลี่ย: '+(avgM.length>0 ? Math.round(avgM.reduce((a,b)=>a+b,0)/avgM.length).toLocaleString() : 0)+' ฿/เดือน');
+        if (mySalesChart) mySalesChart.destroy();
+        const ctxY = document.getElementById('salesChart');
+        if (ctxY) {
+            mySalesChart = new Chart(ctxY, {
+                type:'bar',
+                data:{ labels:labelsY, datasets:[
+                    { label:'ยอดขาย', data:salesDataY, backgroundColor:'rgba(99,102,241,0.7)' },
+                    { label:'กำไรประมาณ', data:profitDataY, backgroundColor:'rgba(16,185,129,0.5)' }
+                ]},
+                options:{ responsive:true, maintainAspectRatio:false }
+            });
+        }
+
+        // ── (4) 5 สินค้าทำเงินสูงสุด (เดือนนี้) — Pie ──
+        const top5 = aggregateTopItems(thisMonthBills, 5);
+        if (myTop5PieChart) myTop5PieChart.destroy();
+        const ctxTop5 = document.getElementById('top5PieChart');
+        if (ctxTop5) {
+            if (top5.length === 0) {
+                // แสดงข้อความแทนกราฟถ้าไม่มีข้อมูล
+                const container = document.getElementById('dashTopItems_container');
+                if (container) container.innerHTML = '<p class="text-center text-gray-400 pt-10">ยังไม่มีข้อมูลเดือนนี้</p>';
+            } else {
+                myTop5PieChart = new Chart(ctxTop5, {
+                    type:'doughnut',
+                    data:{
+                        labels: top5.map(x => x.name),
+                        datasets:[{
+                            data: top5.map(x => x.revenue),
+                            backgroundColor:['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6']
+                        }]
+                    },
+                    options:{
+                        responsive:true, maintainAspectRatio:false,
+                        plugins:{
+                            legend:{ position:'right', labels:{ font:{ size:11 }, boxWidth:12 } },
+                            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // ── (5) Top 3 สินค้าขายดีเดือนที่แล้ว — Pie เล็ก ──
+        const top3Last = aggregateTopItems(lastMonthBills, 3);
+        if (myTop3PieChart) myTop3PieChart.destroy();
+        const ctxTop3 = document.getElementById('top3PieChart');
+        if (ctxTop3) {
+            const container = document.getElementById('dashLastMonthTopItems_container');
+            if (top3Last.length === 0) {
+                if (container) {
+                    container.innerHTML = '<p class="text-[10px] sm:text-xs font-bold text-indigo-400 mb-2">สินค้าขายดี (Top 3)</p><p class="text-center text-gray-400 text-xs pt-4">ไม่มีข้อมูลเดือนที่ผ่านมา</p>';
+                }
+            } else {
+                myTop3PieChart = new Chart(ctxTop3, {
+                    type:'doughnut',
+                    data:{
+                        labels: top3Last.map(x => x.name),
+                        datasets:[{
+                            data: top3Last.map(x => x.revenue),
+                            backgroundColor:['#6366f1','#22c55e','#f97316']
+                        }]
+                    },
+                    options:{
+                        responsive:true, maintainAspectRatio:false,
+                        plugins:{
+                            legend:{ position:'right', labels:{ font:{ size:10 }, boxWidth:10 } },
+                            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
+                        }
+                    }
+                });
+            }
+        }
+
+        // ── (6) ช่วงเวลาลูกค้าเยอะสุด Top 3 (เดือนที่แล้ว) ──
+        const lastMonthPeakHours = aggregatePeakHours(lastMonthBills, 3);
+        const peakBoxLast = document.getElementById('dashLastMonthPeak');
+        if (peakBoxLast) {
+            if (lastMonthPeakHours.length === 0) {
+                peakBoxLast.innerHTML = '<p class="text-xs text-gray-400">ไม่มีข้อมูล</p>';
+            } else {
+                const maxCount = lastMonthPeakHours[0].count;
+                peakBoxLast.innerHTML = lastMonthPeakHours.map((h, i) => {
+                    const pct = Math.round((h.count / maxCount) * 100);
+                    const medal = i===0 ? '🥇' : i===1 ? '🥈' : '🥉';
+                    return `<div class="flex items-center gap-2 text-xs">
+                        <span class="w-5">${medal}</span>
+                        <span class="font-bold text-indigo-700 w-14">${h.label}</span>
+                        <div class="flex-1 bg-indigo-100 rounded-full h-2 overflow-hidden">
+                            <div class="bg-indigo-500 h-2 rounded-full" style="width:${pct}%"></div>
+                        </div>
+                        <span class="text-indigo-600 font-bold w-10 text-right">${h.count} บิล</span>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        // ── (7) ช่วงเวลาลูกค้าเยอะสุด (วิเคราะห์ตามวัน จ.-อา. จากข้อมูลเดือนนี้+เดือนที่แล้ว) ──
+        const allRecentBills = [...thisMonthBills, ...lastMonthBills];
+        const peakByDay = aggregatePeakByDayOfWeek(allRecentBills);
+        const peakBox = document.getElementById('dashPeakHours');
+        if (peakBox) {
+            if (peakByDay.every(d => d.count === 0)) {
+                peakBox.innerHTML = '<p class="text-sm text-gray-400">ยังไม่มีข้อมูลเพียงพอสำหรับวิเคราะห์</p>';
+            } else {
+                const maxCount = Math.max(...peakByDay.map(d => d.count));
+                peakBox.innerHTML = peakByDay.map(d => {
+                    const pct = maxCount > 0 ? Math.round((d.count / maxCount) * 100) : 0;
+                    return `<div class="flex items-center gap-2 text-sm">
+                        <span class="font-bold text-gray-700 w-12">${d.dayName}</span>
+                        <div class="flex-1 bg-blue-100 rounded-full h-3 overflow-hidden">
+                            <div class="bg-gradient-to-r from-blue-400 to-blue-600 h-3 rounded-full transition-all" style="width:${pct}%"></div>
+                        </div>
+                        <span class="text-blue-600 font-bold w-20 text-right text-xs">${d.count.toLocaleString()} บิล</span>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        document.getElementById('dashLoading').classList.add('hidden');
+        document.getElementById('dashContent').classList.remove('hidden');
+    } catch(e) {
+        console.error('Dashboard error:', e);
+        document.getElementById('dashLoading').classList.add('hidden');
+        showCustomAlert('Error','โหลด Dashboard ไม่สำเร็จ: '+(e.message||e));
+    }
+}
+
+// ── Helper: ดึงยอดรวมรายเดือนของปีที่กำหนด (ใช้หลาย query parallel เพื่อให้เร็ว) ──
+async function fetchYearlyMonthlyTotals(year) {
+    const currentMonth = new Date().getMonth() + 1; // 1..12
+    const promises = [];
+    for (let m = 1; m <= currentMonth; m++) {
+        const start = new Date(year, m-1, 1, 0, 0, 0).toISOString();
+        const end   = new Date(year, m, 1, 0, 0, 0).toISOString();
+        promises.push(fetchMonthTotal(start, end).then(total => ({ month: m, total })));
+    }
+    return await Promise.all(promises);
+}
+
+// ── Helper: ดึงเฉพาะคอลัมน์ total ในช่วงเวลา แล้วคำนวณผลรวม (paginate) ──
+async function fetchMonthTotal(startISO, endISO) {
+    const PAGE_SIZE = 1000;
+    let sum = 0;
+    let from = 0;
+    while (true) {
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await _supa.from('bills')
+            .select('total')
+            .gte('date', startISO)
+            .lt('date', endISO)
+            .range(from, to);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        data.forEach(r => { sum += parseFloat(r.total||0); });
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+    }
+    return sum;
+}
+
+// ── Helper: รวมสินค้าขายดีจากรายการบิล ──
+function aggregateTopItems(bills, topN) {
+    const agg = {};
+    bills.forEach(b => {
+        const items = Array.isArray(b.items) ? b.items : [];
+        items.forEach(it => {
+            const name = it.name || 'ไม่ระบุ';
+            const qty = parseFloat(it.qty||0);
+            const price = parseFloat(it.price||0);
+            if (!agg[name]) agg[name] = { name, qty: 0, revenue: 0 };
+            agg[name].qty     += qty;
+            agg[name].revenue += qty * price;
+        });
+    });
+    return Object.values(agg).sort((a,b) => b.revenue - a.revenue).slice(0, topN);
+}
+
+// ── Helper: รวม Top 3 ช่วงเวลาที่ลูกค้าเยอะสุด (กลุ่มละ 2 ชั่วโมง) ──
+function aggregatePeakHours(bills, topN) {
+    const slots = {}; // '08:00-10:00' -> count
+    bills.forEach(b => {
+        if (!b.date) return;
+        const d = new Date(b.date);
+        const h = d.getHours();
+        const slotStart = Math.floor(h / 2) * 2;
+        const slotEnd = slotStart + 2;
+        const label = `${String(slotStart).padStart(2,'0')}-${String(slotEnd).padStart(2,'0')}น.`;
+        slots[label] = (slots[label] || 0) + 1;
+    });
+    return Object.entries(slots)
+        .map(([label, count]) => ({ label, count }))
+        .sort((a,b) => b.count - a.count)
+        .slice(0, topN);
+}
+
+// ── Helper: รวมจำนวนบิลรายวันในสัปดาห์ (จ.-อา.) ──
+function aggregatePeakByDayOfWeek(bills) {
+    // getDay(): 0=Sun, 1=Mon, ..., 6=Sat → map ให้เรียง จ.-อา.
+    const dayNames = ['จ.','อ.','พ.','พฤ.','ศ.','ส.','อา.'];
+    const jsIndexToMonFirst = { 1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 0:6 };
+    const counts = [0,0,0,0,0,0,0];
+    bills.forEach(b => {
+        if (!b.date) return;
+        const d = new Date(b.date);
+        const idx = jsIndexToMonFirst[d.getDay()];
+        counts[idx]++;
+    });
+    return dayNames.map((name, i) => ({ dayName: name, count: counts[i] }));
 }
 
 // ============================================================
@@ -2704,24 +3061,195 @@ async function exportProductsPDF() {
 // ── Export Dashboard PDF ──
 async function exportDashboardPDF() {
     setLoading('btnExportDash', true, 'กำลัง Export...');
+
     try {
-        showToast('กำลังเปิดหน้าต่างพิมพ์...', 'warning');
-        const dashEl = document.getElementById('dashContent');
-        if (!dashEl) return;
-        // ใช้ print dialog ของ browser โดยตรง (ง่ายและรองรับไทยได้ดี)
-        const w = window.open('', '_blank');
-        w.document.write(`<html><head><title>Dashboard Report</title>
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600&display=swap" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>
-        <style>body{font-family:'Sarabun',sans-serif;padding:20px;font-size:13px;}
-        table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:6px;}
-        th{background:#f3f4f6;}.no-print{display:none;}</style></head>
-        <body><h2 style="text-align:center">รายงาน Dashboard — ${new Date().toLocaleDateString('th-TH')}</h2>
-        ${dashEl.innerHTML}<script>window.onload=()=>setTimeout(()=>window.print(),500)<\/script>
-        </body></html>`);
-        w.document.close();
+        // ════════════════════════════════════════════════════════════
+        // เก็บข้อมูลที่แสดงอยู่ในหน้า dashboard (ไม่ clone DOM — ดึงค่าตรงๆ)
+        // ════════════════════════════════════════════════════════════
+        const getText = (id) => (document.getElementById(id)?.innerText || '0').trim();
+        const getCanvasDataUrl = (id) => {
+            const c = document.getElementById(id);
+            if (!c || !c.toDataURL) return '';
+            try { return c.toDataURL('image/png', 1.0); } catch(e) { console.warn('canvas err', id, e); return ''; }
+        };
+
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('th-TH', { year:'numeric', month:'long', day:'numeric' });
+        const timeStr = now.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit' });
+
+        // ยอดขายต่างๆ
+        const todaySales  = getText('dashTodaySales');
+        const todayProfit = getText('dashTodayProfit');
+        const todayBills  = getText('dashTodayBills');
+        const yestSales   = getText('dashYestSales');
+        const monthSales  = getText('dashMonthSales');
+        const monthProfit = getText('dashMonthProfit');
+        const lastMonthSales  = getText('dashLastMonthSales');
+        const lastMonthProfit = getText('dashLastMonthProfit');
+        const lastMonthName   = getText('lastMonthNameLabel');
+        const thisMonthName   = getText('thisMonthNameLabel');
+        const avg7Days        = getText('avg7Days');
+        const avgMonthly      = getText('avgMonthly');
+        const profitPercent   = (document.getElementById('dashProfitInput')?.value) || '12.5';
+
+        // กราฟ
+        const chart7Days    = getCanvasDataUrl('sales7DaysChart');
+        const chartYearly   = getCanvasDataUrl('salesChart');
+        const chartTop5     = getCanvasDataUrl('top5PieChart');
+        const chartTop3Last = getCanvasDataUrl('top3PieChart');
+
+        // HTML ของ peak hours (เอาจริงๆ มาใส่ก็ได้ แต่ปลอดภัยที่จะ inline style ใหม่เอง)
+        const peakLastHTML = document.getElementById('dashLastMonthPeak')?.innerHTML || '';
+        const peakWeekHTML = document.getElementById('dashPeakHours')?.innerHTML || '';
+
+        // ════════════════════════════════════════════════════════════
+        // สร้าง HTML Wrapper แบบ inline style ทั้งหมด (ไม่พึ่ง Tailwind)
+        // ════════════════════════════════════════════════════════════
+        const wrapper = document.createElement('div');
+        // ⭐️ สำคัญ: ต้องอยู่ในหน้าจอจริง (ไม่ใช่ off-screen) ไม่งั้น html2canvas render ไม่ได้
+        // วิธีซ่อนที่ปลอดภัย: top:0, left:0, opacity:0 + pointerEvents:none (เก็บไว้ใน DOM, มองไม่เห็น, ไม่ขวางคลิก)
+        wrapper.style.cssText = `
+            position:fixed; top:0; left:0; width:1000px;
+            background:#ffffff; padding:30px; box-sizing:border-box;
+            font-family: Kanit, Sarabun, Arial, sans-serif; color:#111827;
+            opacity:0; pointer-events:none; z-index:-1;
+        `;
+
+        const pill = (label, value, unit, colorText) => `
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;text-align:left;flex:1;min-width:0;">
+                <div style="font-size:10px;color:#6b7280;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">${label}</div>
+                <div style="font-size:22px;font-weight:800;color:${colorText};line-height:1.1;">${value} <span style="font-size:12px;color:#9ca3af;font-weight:500;">${unit||''}</span></div>
+            </div>
+        `;
+
+        const chartBlock = (title, imgData, extra) => `
+            <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px;page-break-inside:avoid;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;">${title}</div>
+                    ${extra ? `<div style="font-size:11px;color:#2563eb;background:#eff6ff;padding:4px 10px;border-radius:6px;font-weight:700;">${extra}</div>` : ''}
+                </div>
+                ${imgData
+                    ? `<img src="${imgData}" style="width:100%;height:auto;display:block;" />`
+                    : `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:12px;">ไม่มีข้อมูล</div>`
+                }
+            </div>
+        `;
+
+        wrapper.innerHTML = `
+            <!-- Header -->
+            <div style="border-bottom:3px solid #2563eb;padding-bottom:14px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end;">
+                <div>
+                    <div style="font-size:11px;color:#6b7280;font-weight:600;letter-spacing:3px;">ANALYTICS DASHBOARD REPORT</div>
+                    <div style="font-size:24px;font-weight:800;color:#1e3a8a;margin-top:4px;">ร้านเจ้พินขายของชำ</div>
+                </div>
+                <div style="text-align:right;font-size:11px;color:#6b7280;line-height:1.5;">
+                    <div style="font-weight:700;color:#111827;">วันที่ออกรายงาน</div>
+                    <div>${dateStr}</div>
+                    <div>เวลา ${timeStr} น.</div>
+                </div>
+            </div>
+
+            <!-- สรุปวันนี้ -->
+            <div style="background:linear-gradient(135deg,#dbeafe 0%,#e0e7ff 100%);border-radius:12px;padding:16px;margin-bottom:14px;border:1px solid #c7d2fe;">
+                <div style="font-size:12px;font-weight:700;color:#3730a3;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">📅 สรุปวันนี้</div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    ${pill('ยอดขายวันนี้', todaySales, '฿', '#1d4ed8')}
+                    ${pill(`กำไร ${profitPercent}% (วันนี้)`, todayProfit, '฿', '#059669')}
+                    ${pill('จำนวนบิล', todayBills, 'บิล', '#374151')}
+                    ${pill('ยอดขายเมื่อวาน', yestSales, '฿', '#6b7280')}
+                </div>
+            </div>
+
+            <!-- สรุปเดือนนี้ + เดือนที่แล้ว -->
+            <div style="display:flex;gap:12px;margin-bottom:14px;">
+                <div style="flex:1;background:#ecfdf5;border-radius:12px;padding:16px;border:1px solid #a7f3d0;">
+                    <div style="font-size:12px;font-weight:700;color:#065f46;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🗓️ ${thisMonthName}</div>
+                    <div style="display:flex;gap:10px;">
+                        ${pill('ยอดขายทั้งเดือน', monthSales, '฿', '#047857')}
+                        ${pill(`กำไร ${profitPercent}%`, monthProfit, '฿', '#059669')}
+                    </div>
+                </div>
+                <div style="flex:1;background:#eff6ff;border-radius:12px;padding:16px;border:1px solid #bfdbfe;">
+                    <div style="font-size:12px;font-weight:700;color:#1e40af;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">⏱️ ${lastMonthName}</div>
+                    <div style="display:flex;gap:10px;">
+                        ${pill('ยอดขายเดือนที่แล้ว', lastMonthSales, '฿', '#1d4ed8')}
+                        ${pill(`กำไร ${profitPercent}%`, lastMonthProfit, '฿', '#059669')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- กราฟ 7 วัน -->
+            ${chartBlock('กราฟยอดขายและกำไร (ย้อนหลัง 7 วัน)', chart7Days, avg7Days)}
+
+            <!-- กราฟปีนี้ -->
+            ${chartBlock('กราฟยอดขายและกำไร ปีนี้ (ตั้งแต่ ม.ค.)', chartYearly, avgMonthly)}
+
+            <!-- 2 คอลัมน์: Top 5 สินค้า + ช่วงเวลาลูกค้าเยอะ -->
+            <div style="display:flex;gap:12px;margin-bottom:14px;page-break-inside:avoid;">
+                <div style="flex:1;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6;">🏆 5 สินค้าทำเงินสูงสุด (${thisMonthName})</div>
+                    ${chartTop5
+                        ? `<img src="${chartTop5}" style="width:100%;height:auto;display:block;" />`
+                        : `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:12px;">ไม่มีข้อมูล</div>`
+                    }
+                </div>
+                <div style="flex:1;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6;">🕐 ช่วงเวลาลูกค้าเยอะสุด (จ.–อา.)</div>
+                    <div id="__pdfPeakWeek">${peakWeekHTML || '<div style="color:#9ca3af;font-size:12px;text-align:center;padding:12px;">ไม่มีข้อมูล</div>'}</div>
+                </div>
+            </div>
+
+            <!-- Top 3 สินค้าเดือนที่แล้ว + ช่วงเวลา Top3 เดือนที่แล้ว -->
+            <div style="display:flex;gap:12px;margin-bottom:14px;page-break-inside:avoid;">
+                <div style="flex:1;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6;">🥇 สินค้าขายดี Top 3 (${lastMonthName})</div>
+                    ${chartTop3Last
+                        ? `<img src="${chartTop3Last}" style="width:100%;height:auto;display:block;max-width:220px;margin:0 auto;" />`
+                        : `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:12px;">ไม่มีข้อมูล</div>`
+                    }
+                </div>
+                <div style="flex:1;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #f3f4f6;">⏰ ช่วงเวลาลูกค้าเยอะ Top 3 (${lastMonthName})</div>
+                    <div id="__pdfPeakLast">${peakLastHTML || '<div style="color:#9ca3af;font-size:12px;text-align:center;padding:12px;">ไม่มีข้อมูล</div>'}</div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="margin-top:20px;padding-top:12px;border-top:1px solid #e5e7eb;text-align:center;font-size:10px;color:#9ca3af;">
+                รายงานนี้สร้างอัตโนมัติจากระบบ POS • ${dateStr} ${timeStr} น.
+            </div>
+        `;
+
+        document.body.appendChild(wrapper);
+
+        // รอให้ browser render และ img dataURL โหลดเสร็จ
+        await new Promise(r => setTimeout(r, 250));
+
+        const opt = {
+            margin:       [10, 10, 10, 10],
+            filename:     `Dashboard_Report_${now.toISOString().split('T')[0]}.pdf`,
+            image:        { type: 'jpeg', quality: 0.95 },
+            html2canvas:  {
+                scale: 2,
+                useCORS: true,
+                backgroundColor: '#ffffff',
+                logging: false,
+                width: 1000,
+                windowWidth: 1000
+            },
+            jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+
+        try {
+            await html2pdf().set(opt).from(wrapper).save();
+            showToast('Export PDF สำเร็จ', 'success');
+        } finally {
+            if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+        }
     } catch(e) {
-        showCustomAlert('ผิดพลาด', 'Export ไม่สำเร็จ: ' + e.message);
+        console.error('exportDashboardPDF error:', e);
+        showCustomAlert('ผิดพลาด', 'Export ไม่สำเร็จ: ' + (e.message || e));
     } finally {
         setLoading('btnExportDash', false, 'Export PDF');
     }
