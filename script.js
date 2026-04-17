@@ -39,6 +39,45 @@ const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const HAS_BLUETOOTH = typeof navigator.bluetooth !== 'undefined';
 
+// ============================================================
+// 🏪 SHOP INFO — ข้อมูลร้านสำหรับใบเสร็จ
+// ============================================================
+let _shopInfo = null; // cache
+
+async function getShopInfo() {
+    if (_shopInfo) return _shopInfo;
+    try {
+        const s = await dbGet('settings', 'shopInfo');
+        _shopInfo = (s && s.value) ? s.value : {};
+    } catch(e) {
+        console.warn('getShopInfo error:', e);
+        _shopInfo = {};
+    }
+    return _shopInfo || {};
+}
+
+async function saveShopInfo() {
+    const name    = document.getElementById('shopNameInput')?.value.trim()    || '';
+    const address = document.getElementById('shopAddressInput')?.value.trim() || '';
+    const phone   = document.getElementById('shopPhoneInput')?.value.trim()   || '';
+    const footer  = document.getElementById('shopFooterInput')?.value.trim()  || 'ขอบคุณที่ใช้บริการค่ะ';
+    const newInfo = { name, address, phone, footer };
+    // อัปเดต cache ทันที
+    _shopInfo = newInfo;
+    await dbPut('settings', { key: 'shopInfo', value: newInfo });
+    showToast('บันทึกข้อมูลร้านแล้ว ✅', 'success');
+}
+
+async function loadShopInfoToForm() {
+    const info = await getShopInfo();
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    set('shopNameInput',    info.name    || '');
+    set('shopAddressInput', info.address || '');
+    set('shopPhoneInput',   info.phone   || '');
+    set('shopFooterInput',  info.footer  || 'ขอบคุณที่ใช้บริการค่ะ');
+}
+
+
 // แสดง alert แบบ iOS-friendly เมื่อ Bluetooth ไม่รองรับ
 function showIOSNoPrintAlert() {
     showCustomAlert(
@@ -238,13 +277,26 @@ async function buildReceiptBytes(bill) {
     const R = (text, opts = {}) => rows.push({ text, ...opts });
     const DIV = (ch = '─') => R(ch.repeat(38), { align:'center', size: FONT_SZ - 5, color:'#888' });
 
-    R(shopName,    { align:'center', bold:true, size: FONT_SZ + 6 });
-    if (shopAddress) R(shopAddress, { align:'center', size: FONT_SZ - 2 });
-    if (shopPhone)   R('โทร. ' + shopPhone, { align:'center', size: FONT_SZ - 2 });
-    R('ใบเสร็จรับเงิน', { align:'center', bold:true, size: FONT_SZ + 2, mt:4 });
+    // ── Header: ชื่อร้าน + ที่อยู่ + เบอร์โทร ──
+    R(shopName, { align:'center', bold:true, size: FONT_SZ + 6 });
+    if (shopAddress) {
+        // ถ้าที่อยู่ยาวเกิน 32 ตัว ตัดแบ่ง 2 บรรทัด
+        const maxChars = 32;
+        if (shopAddress.length > maxChars) {
+            // หาจุดตัดที่ space ที่ใกล้ maxChars ที่สุด
+            const breakAt = shopAddress.lastIndexOf(' ', maxChars) || maxChars;
+            R(shopAddress.substring(0, breakAt).trim(),  { align:'center', size: FONT_SZ - 3 });
+            R(shopAddress.substring(breakAt).trim(),     { align:'center', size: FONT_SZ - 3 });
+        } else {
+            R(shopAddress, { align:'center', size: FONT_SZ - 3 });
+        }
+    }
+    if (shopPhone) R('โทร. ' + shopPhone, { align:'center', size: FONT_SZ - 3 });
+    DIV('─');
+    R('ใบเสร็จรับเงิน', { align:'center', bold:true, size: FONT_SZ + 2 });
     DIV('═');
-    R('เลขที่: ' + billId,                         { size: FONT_SZ - 2 });
-    R('วันที่: ' + dateStr + '   ' + timeStr,       { size: FONT_SZ - 2 });
+    R('เลขที่: ' + billId,                   { size: FONT_SZ - 2 });
+    R('วันที่: ' + dateStr + '  ' + timeStr, { size: FONT_SZ - 2 });
     if (custName && custName !== 'Walk-in' && custName !== 'หน้าร้าน')
         R('ลูกค้า: ' + custName + (custPhone ? ' ('+custPhone+')' : ''), { size: FONT_SZ - 2 });
     if (custAddr) R('ส่งที่: ' + custAddr, { size: FONT_SZ - 2 });
@@ -266,15 +318,60 @@ async function buildReceiptBytes(bill) {
     rows.push({ type:'cols2', left:'เงินทอน',  right: change.toLocaleString('th-TH',{minimumFractionDigits:2})+' ฿', size: FONT_SZ-2 });
     DIV('═');
     R(shopFooter, { align:'center', size: FONT_SZ - 2, mt:4 });
-    R(' ',        { size: 12 });
+    R(' ',        { size: 8 });
+
+    // ── โหลด QR images (ถ้ามี) ──
+    // QR 1: รูปจาก Supabase Storage (bankQR ที่ตั้งค่าไว้)
+    // QR 2: ลิงก์สั่งซื้อออนไลน์ สร้างจาก QR API
+    const QR_SIZE = 160; // px บน canvas
+    const QR_GAP  = 12;  // ระยะห่างระหว่าง QR
+
+    // ฟังก์ชันโหลดรูปเป็น HTMLImageElement
+    const loadImg = (src) => new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload  = () => resolve(img);
+        img.onerror = () => resolve(null); // ถ้าโหลดไม่ได้ให้ข้าม
+        img.src = src;
+    });
+
+    // โหลด QR สั่งซื้อออนไลน์เสมอ
+    const orderUrl  = window.location.href.split('?')[0] + '?mode=customer';
+    const orderQRSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(orderUrl)}`;
+
+    // โหลด bankQR จาก Storage (ถ้ามี)
+    let bankQRSrc = null;
+    try {
+        const s = await dbGet('settings', 'bankQR');
+        if (s && s.value) {
+            if (s.value.storagePath && s.value.bucket) {
+                const { data } = _supa.storage.from(s.value.bucket).getPublicUrl(s.value.storagePath);
+                bankQRSrc = data?.publicUrl || null;
+            } else if (s.value.image) {
+                bankQRSrc = s.value.image; // base64 เก่า
+            }
+        }
+    } catch(e) { bankQRSrc = null; }
+
+    // โหลดรูปทั้งสอง parallel
+    const [bankQRImg, orderQRImg] = await Promise.all([
+        bankQRSrc ? loadImg(bankQRSrc) : Promise.resolve(null),
+        loadImg(orderQRSrc),
+    ]);
+
+    const hasBank  = !!bankQRImg;
+    const hasOrder = !!orderQRImg;
+    const qrCount  = (hasBank ? 1 : 0) + (hasOrder ? 1 : 0);
 
     // ── คำนวณความสูง canvas ──
-    const measure = document.createElement('canvas').getContext('2d');
     let totalH = 14;
     rows.forEach(row => {
         totalH += (row.mt || 0);
         totalH += row.type ? LINE_H : Math.ceil((row.size || FONT_SZ) * 1.4);
     });
+    // เพิ่มพื้นที่สำหรับ QR section (label + QR + caption)
+    const QR_SECTION_H = qrCount === 2 ? (QR_SIZE*2 + 100) : qrCount === 1 ? (QR_SIZE + 50) : 0;
+    totalH += QR_SECTION_H;
 
     // ── วาด canvas ──
     const canvas = document.createElement('canvas');
@@ -293,10 +390,8 @@ async function buildReceiptBytes(bill) {
         const lh   = row.type ? LINE_H : Math.ceil(sz * 1.4);
 
         if (row.type === 'cols3') {
-            // ชื่อ 55% | จน 12% | รวม 33%
             const nW = Math.floor(COL_W * 0.55);
             const qW = Math.floor(COL_W * 0.12);
-            const aW = COL_W - nW - qW;
             ctx.font = `${bold} ${sz}px ${FONT_FAM}`;
             ctx.textBaseline = 'top';
             ctx.fillText(String(row.name||'').substring(0,22), PAD_X, y);
@@ -321,6 +416,66 @@ async function buildReceiptBytes(bill) {
         }
         y += lh;
     });
+
+    // ── วาด QR Codes ท้ายใบเสร็จ ──
+    if (qrCount > 0) {
+        y += 8;
+
+        if (qrCount === 2) {
+            // วาดสอง QR เรียงบน-ล่าง กึ่งกลาง
+            const qx = Math.floor((PAPER_W - QR_SIZE) / 2);
+
+            // ── QR บน: bankQR (ชำระเงิน) ──
+            ctx.strokeStyle = '#ddd';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(qx - 4, y - 4, QR_SIZE + 8, QR_SIZE + 8);
+            ctx.drawImage(bankQRImg, qx, y, QR_SIZE, QR_SIZE);
+            y += QR_SIZE + 8;
+            ctx.font = `400 ${FONT_SZ - 4}px ${FONT_FAM}`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#444';
+            const lbl1 = 'สแกนเพื่อชำระเงิน';
+            ctx.fillText(lbl1, (PAPER_W - ctx.measureText(lbl1).width) / 2, y);
+            y += 24;
+
+            // เส้นคั่น
+            ctx.fillStyle = '#eee';
+            ctx.fillRect(PAD_X, y, COL_W, 1);
+            ctx.fillStyle = '#000';
+            y += 10;
+
+            // ── QR ล่าง: order online ──
+            ctx.strokeStyle = '#ddd';
+            ctx.strokeRect(qx - 4, y - 4, QR_SIZE + 8, QR_SIZE + 8);
+            ctx.drawImage(orderQRImg, qx, y, QR_SIZE, QR_SIZE);
+            y += QR_SIZE + 8;
+            ctx.font = `400 ${FONT_SZ - 4}px ${FONT_FAM}`;
+            ctx.fillStyle = '#444';
+            const lbl2 = 'สแกนเพื่อสั่งซื้อออนไลน์';
+            ctx.fillText(lbl2, (PAPER_W - ctx.measureText(lbl2).width) / 2, y);
+            y += 20;
+
+        } else {
+            // วาด QR เดี่ยว กึ่งกลาง
+            const img  = hasBank ? bankQRImg : orderQRImg;
+            const lbl  = hasBank ? 'ชำระเงิน' : 'สั่งซื้อออนไลน์';
+            const qx   = Math.floor((PAPER_W - QR_SIZE) / 2);
+
+            ctx.strokeStyle = '#ddd';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(qx - 4, y - 4, QR_SIZE + 8, QR_SIZE + 8);
+            ctx.drawImage(img, qx, y, QR_SIZE, QR_SIZE);
+            y += QR_SIZE + 8;
+
+            ctx.font = `400 ${FONT_SZ - 5}px ${FONT_FAM}`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = '#444';
+            ctx.fillText(lbl, (PAPER_W - ctx.measureText(lbl).width) / 2, y);
+            y += 20;
+        }
+
+        ctx.fillStyle = '#000';
+    }
 
     return canvasToEscPos(canvas);
 }
