@@ -419,7 +419,8 @@
             <!-- ปุ่มปริ้น -->
             <div class="pointer-events-auto border-t border-gray-200 bg-white p-3 flex gap-2 shrink-0">
                 <button id="billDetailPrintBtn" class="flex-1 bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition active:scale-95 shadow">
-                    <i class="fas fa-print"></i> ปริ้นใบเสร็จ
+                    <i id="billDetailPrintIcon" class="fas fa-print"></i>
+                    <span id="billDetailPrintLabel">ปริ้นใบเสร็จ</span>
                 </button>
                 <button onclick="closeModal('billDetailModal')" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-3 rounded-xl transition active:scale-95">
                     ปิด
@@ -509,6 +510,21 @@
                         </div>
                     </div>
                     <button onclick="togglePrinterConnection()" class="bg-gray-800 hover:bg-gray-900 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition active:scale-95"><i class="fas fa-bluetooth mr-1"></i>เชื่อมต่อ</button>
+                </div>
+                <!-- ✅ toggle ปริ้นอัตโนมัติ -->
+                <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                    <div>
+                        <div class="text-sm font-bold text-gray-800">ปริ้นอัตโนมัติเมื่อจบการขาย</div>
+                        <div class="text-[11px] text-gray-500 mt-0.5">ปิด = ต้องไปปริ้นเองที่เมนู <strong>บิล</strong></div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="autoPrintToggle" class="sr-only peer"
+                               onchange="setAutoPrint(this.checked)">
+                        <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer
+                                    peer-checked:bg-blue-500 transition-colors duration-200"></div>
+                        <div class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow
+                                    transition-transform duration-200 peer-checked:translate-x-5"></div>
+                    </label>
                 </div>
                 <button onclick="testPrint()" class="w-full bg-gray-700 hover:bg-gray-800 text-white font-bold py-2.5 rounded-xl shadow transition active:scale-95 text-sm flex items-center justify-center gap-2">
                     <i class="fas fa-print"></i> ทดสอบปริ้น (Test Print)

@@ -13,6 +13,26 @@ const SUPABASE_ANON = 'sb_publishable_swcv3sHOzdEyuvqhlnf-4g_cMzWIx9y';         
 const _supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ============================================================
+// 🖨️ AUTO-PRINT SETTING
+// เก็บใน localStorage — ไม่ต้องดึงจาก Supabase ทุกครั้ง
+// ============================================================
+function isAutoPrintEnabled() {
+    // default = เปิด (true) ถ้ายังไม่เคยตั้งค่า
+    return localStorage.getItem('autoPrint') !== 'false';
+}
+
+function setAutoPrint(enabled) {
+    localStorage.setItem('autoPrint', enabled ? 'true' : 'false');
+    showToast(enabled ? '🖨️ ปริ้นอัตโนมัติ: เปิด' : '🖨️ ปริ้นอัตโนมัติ: ปิด — ปริ้นเองได้ที่เมนู บิล', 'success');
+}
+
+// sync toggle state เมื่อเปิด modal
+function syncAutoPrintToggle() {
+    const toggle = document.getElementById('autoPrintToggle');
+    if (toggle) toggle.checked = isAutoPrintEnabled();
+}
+
+// ============================================================
 // 📱 DEVICE DETECTION
 // ============================================================
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -395,10 +415,47 @@ async function togglePrinterConnection() {
 }
 
 // ปริ้นจากหน้า bill detail (ประวัติ)
-function printBillDetail(index) {
+async function printBillDetail(index) {
     const bill = historyBills[index];
     if (!bill) return;
-    printReceipt(bill);
+
+    const btn   = document.getElementById('billDetailPrintBtn');
+    const icon  = document.getElementById('billDetailPrintIcon');
+    const label = document.getElementById('billDetailPrintLabel');
+
+    // แสดงสถานะ กำลังพิมพ์...
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-75', 'cursor-not-allowed');
+        btn.classList.remove('active:scale-95');
+    }
+    if (icon)  icon.className  = 'fas fa-circle-notch fa-spin';
+    if (label) label.innerText = 'กำลังพิมพ์...';
+
+    try {
+        await printReceipt(bill);
+        // แสดงสำเร็จสั้นๆ
+        if (icon)  icon.className  = 'fas fa-check';
+        if (label) label.innerText = 'พิมพ์แล้ว ✓';
+        setTimeout(() => {
+            if (icon)  icon.className  = 'fas fa-print';
+            if (label) label.innerText = 'ปริ้นใบเสร็จ';
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                btn.classList.add('active:scale-95');
+            }
+        }, 2000);
+    } catch(e) {
+        // reset กลับถ้า error
+        if (icon)  icon.className  = 'fas fa-print';
+        if (label) label.innerText = 'ปริ้นใบเสร็จ';
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            btn.classList.add('active:scale-95');
+        }
+    }
 }
 
 
@@ -1592,8 +1649,8 @@ async function sendPaymentRequest(payload, isQuickPay) {
             receive: payload.received, change: payload.change, note: payload.note || ''
         };
         await dbPut('history', historyData);
-        // 🖨️ ปริ้นใบเสร็จอัตโนมัติถ้าเครื่องปริ้นเชื่อมต่ออยู่
-        if (PRINTER.isConnected()) {
+        // 🖨️ ปริ้นอัตโนมัติ — เฉพาะเมื่อเปิดใช้งาน + เครื่องปริ้นเชื่อมต่ออยู่
+        if (isAutoPrintEnabled() && PRINTER.isConnected() && !IS_IOS && HAS_BLUETOOTH) {
             await printReceipt(historyData);
         }
         // ตัดสต็อกผ่าน Supabase RPC function
@@ -1713,8 +1770,18 @@ function openBillDetail(index) {
     </div>`;
     document.getElementById('billDetailModal').classList.remove('hidden');
     // เพิ่มปุ่มปริ้น
-    const printBtn = document.getElementById('billDetailPrintBtn');
-    if (printBtn) { printBtn.onclick = () => printBillDetail(index); }
+    // reset ปุ่มปริ้นกลับสภาพเดิมเมื่อเปิดบิลใหม่
+    const printBtn  = document.getElementById('billDetailPrintBtn');
+    const printIcon = document.getElementById('billDetailPrintIcon');
+    const printLbl  = document.getElementById('billDetailPrintLabel');
+    if (printBtn) {
+        printBtn.disabled = false;
+        printBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+        printBtn.classList.add('active:scale-95');
+        printBtn.onclick = () => printBillDetail(index);
+    }
+    if (printIcon) printIcon.className  = 'fas fa-print';
+    if (printLbl)  printLbl.innerText   = 'ปริ้นใบเสร็จ';
 }
 
 // ============================================================
@@ -2099,7 +2166,8 @@ function openExportModal() {
     document.getElementById('exportStartDate').value = today;
     document.getElementById('exportEndDate').value = today;
     document.getElementById('exportModal').classList.remove('hidden');
-    loadShopInfoToForm(); // โหลดข้อมูลร้านลง form
+    loadShopInfoToForm();
+    syncAutoPrintToggle(); // sync สถานะ toggle
 }
 
 async function exportProductsCSV() {
