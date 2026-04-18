@@ -942,11 +942,24 @@ async function renderStockTable(searchTerm = '') {
         if (error) throw error;
         let items = data || [];
         if (searchTerm) {
-            const s = searchTerm.toLowerCase().trim();
-            items = items.filter(p => p.name.toLowerCase().includes(s) || p.id.toLowerCase().includes(s));
+            // ✅ normalize ค่าที่ค้นหา: trim + lower + ลบ whitespace แฝง (เผื่อมาจาก scanner)
+            const s = String(searchTerm).toLowerCase().trim().replace(/\s+/g, '');
+            items = items.filter(p => {
+                const id   = String(p.id || '').toLowerCase().trim();
+                const name = String(p.name || '').toLowerCase().trim();
+                return id === s || id.includes(s) || name.includes(s);
+            });
         }
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center p-6 text-gray-400">ไม่พบสินค้า</td></tr>'; return;
+            // ✅ แสดงข้อความที่บอก user ว่าค้นด้วยอะไร พร้อมปุ่ม "เพิ่มสินค้านี้"
+            tbody.innerHTML = `<tr><td colspan="9" class="text-center p-8">
+                <div class="text-gray-400 mb-3"><i class="fas fa-search text-3xl mb-2"></i><br>ไม่พบสินค้าที่ตรงกับ <span class="font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700">${searchTerm}</span></div>
+                ${searchTerm ? `<button onclick="quickAddProductFromBarcode('${String(searchTerm).replace(/'/g,"\\'")}')"
+                    class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition active:scale-95 shadow">
+                    <i class="fas fa-plus mr-1"></i> เพิ่มสินค้าใหม่ด้วยรหัสนี้
+                </button>` : ''}
+            </td></tr>`;
+            return;
         }
         tbody.innerHTML = items.map(p => {
             const qty = p.stock_qty || 0;
@@ -1099,6 +1112,22 @@ async function adjustStock(productId, productName, currentQty, mode) {
     renderStockTable(document.getElementById('stockSearchInput')?.value || '');
 }
 
+// ── ฟังก์ชันช่วย: ถ้าสแกน barcode แล้วไม่พบ ให้เปิด form เพิ่มสินค้าใหม่ พร้อม pre-fill รหัส ──
+function quickAddProductFromBarcode(barcode) {
+    closeModal('stockModal');
+    openAddMenuModal();
+    setTimeout(() => {
+        const codeInput = document.getElementById('mCode');
+        if (codeInput) {
+            codeInput.value = barcode;
+            // โฟกัสไปที่ช่องชื่อให้ user กรอกต่อ
+            const nameInput = document.getElementById('mName');
+            if (nameInput) nameInput.focus();
+        }
+    }, 200);
+    showToast(`พร้อมเพิ่มสินค้าใหม่ด้วยรหัส: ${barcode}`, 'success');
+}
+
 // ═══════════════════════════════════════════════════════════
 // 📷 BARCODE SCANNER (html5-qrcode)
 // ═══════════════════════════════════════════════════════════
@@ -1213,16 +1242,19 @@ async function _startBarcodeCamera(facingMode) {
 
 function onBarcodeScanSuccess(decodedText) {
     if (!decodedText) return;
+    // ✅ trim และลบ whitespace แฝง (บาร์โค้ดบางครั้งมี \n หรือ space ติดมา)
+    const cleaned = String(decodedText).trim().replace(/\s+/g, '');
+    if (!cleaned) return;
     // เติมค่าลง input target
     const target = document.getElementById(_barcodeTargetInputId);
     if (target) {
-        target.value = decodedText;
+        target.value = cleaned;
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.focus();
     }
     // bleep เพื่อ feedback
     try { playNotificationSound(); } catch(e) {}
-    showToast(`สแกนได้: ${decodedText}`, 'success');
+    showToast(`สแกนได้: ${cleaned}`, 'success');
     closeBarcodeScanner();
 }
 
