@@ -206,3 +206,59 @@ body { font-family: 'Kanit', sans-serif; touch-action: manipulation; }
 .product-table th { background-color: #eee; position: sticky; top: 0; }
 .editable { background-color: #fffde7; cursor: text; }
 .editable:focus { background-color: #fff59d; outline: none; }
+/* ════════════════════════════════════════════════════════════
+   🛒 CUSTOMER DELIVERY MODE — UI เฉพาะลูกค้า
+   ════════════════════════════════════════════════════════════ */
+
+/* ซ่อน element ที่ติด class .customer-hide เมื่อ body อยู่ในโหมดลูกค้า */
+body.customer-mode .customer-hide,
+body.customer-mode .customer-hide-important { display: none !important; }
+
+/* Header สำหรับโหมดลูกค้า (banner สีฟ้าสวยๆ) */
+body.customer-mode .customer-banner { display: flex !important; }
+body:not(.customer-mode) .customer-banner { display: none !important; }
+
+/* พื้นหลัง gradient นุ่มๆ ในโหมดลูกค้า */
+body.customer-mode #leftPanel {
+    background: linear-gradient(180deg, #eff6ff 0%, #f9fafb 40%);
+}
+
+/* Category bar ซ่อนในโหมดลูกค้า (มีแค่หมวดเดียว ไม่ต้องโชว์) */
+body.customer-mode #categoryBar { display: none !important; }
+
+/* Cart: ใช้พื้นหลัง gradient สว่าง ดูเป็นมิตร */
+body.customer-mode #cartPanel {
+    background: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%);
+}
+
+/* ปรับ grid สินค้าในโหมดลูกค้าให้โปร่งตา */
+body.customer-mode #menuContainer {
+    padding-top: 0.5rem;
+}
+
+/* Grid cards: สไตล์นุ่มนวลขึ้นในโหมดลูกค้า */
+body.customer-mode #menuGrid > div {
+    border-radius: 1rem;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+body.customer-mode #menuGrid > div:active {
+    transform: scale(0.97);
+}
+
+/* ปุ่มคิดเงินลูกค้าเปลี่ยนสีให้เป็นส้ม-เขียวให้รู้สึกว่าเป็น "สั่งซื้อ" */
+body.customer-mode #btnOrderMobile {
+    background: linear-gradient(90deg, #10b981 0%, #059669 100%) !important;
+    box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4) !important;
+}
+
+/* ช่องค้นหาในโหมดลูกค้า — ตัวใหญ่ขึ้น อ่านง่าย */
+body.customer-mode #searchInput {
+    font-size: 16px;
+    padding-top: 0.875rem;
+    padding-bottom: 0.875rem;
+}
+
+/* Safe area สำหรับมือถือรุ่นใหม่ที่มี notch */
+.pb-safe-customer {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}

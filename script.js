@@ -99,7 +99,7 @@ let currentPayOrder = null;
 let historyBills  = [];
 let lastOrderCount = -1;
 
-const categories = ['เครื่องดื่ม', 'ขนม/ของว่าง', 'ของใช้ในบ้าน', 'อาหารแห้ง/เครื่องปรุง', 'อาหารสด', 'เบ็ดเตล็ด'];
+const categories = ['สินค้าเดลิเวอรี่', 'เครื่องดื่ม', 'ขนม/ของว่าง', 'ของใช้ในบ้าน', 'อาหารแห้ง/เครื่องปรุง', 'อาหารสด', 'เบ็ดเตล็ด'];
 
 let isCustomerMode = false;
 let customerTable  = "";
@@ -1732,7 +1732,7 @@ async function fetchMenu() {
 }
 
 function getCategoryEmoji(category) {
-    const map = { 'เครื่องดื่ม':'🥤', 'ขนม/ของว่าง':'🍪', 'ของใช้ในบ้าน':'🏠', 'อาหารแห้ง/เครื่องปรุง':'🧂', 'อาหารสด':'🥩', 'เบ็ดเตล็ด':'🛍️' };
+    const map = { 'สินค้าเดลิเวอรี่':'🛵', 'เครื่องดื่ม':'🥤', 'ขนม/ของว่าง':'🍪', 'ของใช้ในบ้าน':'🏠', 'อาหารแห้ง/เครื่องปรุง':'🧂', 'อาหารสด':'🥩', 'เบ็ดเตล็ด':'🛍️' };
     return map[category] || '📦';
 }
 
@@ -1760,7 +1760,12 @@ function filterMenu(category) {
     }
     let filtered = dataSource;
     if (!searchText) { filtered = filtered.filter(m => !m.isHidden); filtered = filtered.filter(m => m.image && m.image.trim() !== ""); }
-    if (category !== 'All') { filtered = filtered.filter(m => m.category === category); }
+    // ✅ โหมดลูกค้า: กรองเฉพาะสินค้าหมวด "สินค้าเดลิเวอรี่" เสมอ (override category อื่น)
+    if (isCustomerMode) {
+        filtered = filtered.filter(m => m.category === 'สินค้าเดลิเวอรี่');
+    } else if (category !== 'All') {
+        filtered = filtered.filter(m => m.category === category);
+    }
     if (searchText) {
         filtered = filtered.filter(m => m.name.toLowerCase().includes(searchText) || (m.id && String(m.id).toLowerCase().includes(searchText)));
         if (category === 'All') { document.querySelectorAll('.cat-btn').forEach(btn => btn.className = "cat-btn bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 px-5 py-2 rounded-full shadow-sm text-sm font-medium transition border border-gray-200 shrink-0"); }
@@ -2558,29 +2563,37 @@ function openMyRecentOrder() {
     modal.classList.remove('hidden');
 }
 
+// ✅ filter search input: admin mode = เฉพาะตัวเลข (สำหรับบาร์โค้ด), customer mode = พิมพ์ได้ทุกอย่าง
+function handleSearchInputFilter(el) {
+    if (!isCustomerMode) {
+        el.value = el.value.replace(/[^0-9]/g, '');
+    }
+    // ในโหมดลูกค้าไม่ filter อะไร → พิมพ์ภาษาไทยได้
+}
+
 function checkMode() {
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get('mode'); const table = urlParams.get('table');
     if (mode === 'customer') {
         isCustomerMode = true; customerTable = table || "ไม่ระบุ";
+        // ✅ ใส่ class customer-mode บน body — CSS จะซ่อน .customer-hide อัตโนมัติ
+        document.body.classList.add('customer-mode');
         const adminToolbar = document.getElementById('adminToolbar'); if(adminToolbar) adminToolbar.classList.add('hidden');
-        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) customerToolbar.classList.remove('hidden');
+        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) { customerToolbar.classList.remove('hidden'); customerToolbar.classList.add('flex'); }
         const tableDisplay = document.getElementById('customerTableDisplay'); if(tableDisplay) tableDisplay.innerText = customerTable;
         const tableInput = document.getElementById('tableNo'); if(tableInput) { tableInput.value = customerTable; tableInput.readOnly = true; tableInput.classList.add('bg-gray-100','cursor-not-allowed'); }
-        const searchInput = document.getElementById('searchInput'); if(searchInput) { searchInput.placeholder = "พิมพ์ชื่อสินค้าที่ต้องการค้นหา..."; searchInput.setAttribute('inputmode','text'); }
+        const searchInput = document.getElementById('searchInput'); if(searchInput) {
+            searchInput.placeholder = "🔍 ค้นหาสินค้าที่ต้องการ...";
+            searchInput.setAttribute('inputmode','text');
+        }
         const searchIcon = document.getElementById('topSearchIcon'); if(searchIcon) searchIcon.className = 'fas fa-search text-blue-500';
-        const btnToggleKey = document.getElementById('btnToggleKey'); if(btnToggleKey) btnToggleKey.classList.add('hidden');
-        const floatingSearch = document.getElementById('floatingSearchContainer'); if(floatingSearch) floatingSearch.classList.add('hidden');
-        const holdBillContainer = document.getElementById('holdBillContainer'); if(holdBillContainer) holdBillContainer.classList.add('hidden');
     } else {
         isCustomerMode = false;
+        document.body.classList.remove('customer-mode');
         const adminToolbar = document.getElementById('adminToolbar'); if(adminToolbar) adminToolbar.classList.remove('hidden');
-        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) customerToolbar.classList.add('hidden');
+        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) { customerToolbar.classList.add('hidden'); customerToolbar.classList.remove('flex'); }
         const searchInput = document.getElementById('searchInput'); if(searchInput) { searchInput.placeholder = "ยิงบาร์โค้ด..."; searchInput.setAttribute('inputmode','none'); }
         const searchIcon = document.getElementById('topSearchIcon'); if(searchIcon) searchIcon.className = 'fas fa-barcode text-gray-400';
-        const btnToggleKey = document.getElementById('btnToggleKey'); if(btnToggleKey) btnToggleKey.classList.remove('hidden');
-        const floatingSearch = document.getElementById('floatingSearchContainer'); if(floatingSearch) floatingSearch.classList.remove('hidden');
-        const holdBillContainer = document.getElementById('holdBillContainer'); if(holdBillContainer) holdBillContainer.classList.remove('hidden');
     }
 }
 
