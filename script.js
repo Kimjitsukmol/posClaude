@@ -929,116 +929,291 @@ function copyQRLink() {
 // ============================================================
 // 📦 STOCK MANAGEMENT
 // ============================================================
+// ═══════════════════════════════════════════════════════════
+// 📦 STOCK MANAGEMENT — Server-side search + Mobile-first
+// ═══════════════════════════════════════════════════════════
+let _stockSearchTimer = null;
+const STOCK_PAGE_SIZE = 50; // แสดงทีละ 50 รายการ (ป้องกัน load เกิน 1000)
+
 async function openStockModal() {
     document.getElementById('stockModal').classList.remove('hidden');
-    await renderStockTable();
+    const searchEl = document.getElementById('stockSearchInput');
+    if (searchEl) searchEl.value = '';
+    await renderStockTable('');
+}
+
+// debounce การพิมพ์เพื่อไม่ให้ query รัวๆ
+function onStockSearchInput(value) {
+    const clearBtn = document.getElementById('btnClearStockSearch');
+    if (clearBtn) clearBtn.classList.toggle('hidden', !value);
+    clearTimeout(_stockSearchTimer);
+    _stockSearchTimer = setTimeout(() => renderStockTable(value), 250);
+}
+
+function clearStockSearch() {
+    const el = document.getElementById('stockSearchInput');
+    if (el) { el.value = ''; el.focus(); }
+    document.getElementById('btnClearStockSearch')?.classList.add('hidden');
+    renderStockTable('');
 }
 
 async function renderStockTable(searchTerm = '') {
-    const tbody = document.getElementById('stockTableBody');
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center p-6 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl"></i></td></tr>';
+    const content = document.getElementById('stockContent');
+    const statusText = document.getElementById('stockStatusText');
+    if (!content) return;
+
+    content.innerHTML = '<div class="text-center p-10 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl"></i></div>';
+    if (statusText) statusText.innerText = 'กำลังโหลด...';
+
     try {
-        const { data, error } = await _supa.from('products').select('id,name,category,stock_qty,stock_min,price,cost').order('name');
-        if (error) throw error;
-        let items = data || [];
-        if (searchTerm) {
-            // ✅ normalize ค่าที่ค้นหา: trim + lower + ลบ whitespace แฝง (เผื่อมาจาก scanner)
-            const s = String(searchTerm).toLowerCase().trim().replace(/\s+/g, '');
-            items = items.filter(p => {
-                const id   = String(p.id || '').toLowerCase().trim();
-                const name = String(p.name || '').toLowerCase().trim();
-                return id === s || id.includes(s) || name.includes(s);
-            });
+        // ✅ Normalize input
+        const s = String(searchTerm || '').trim().replace(/\s+/g, '');
+
+        // ✅ Build query — ใช้ server-side search ไม่ดึงทุก row มา filter ใน JS
+        let query = _supa.from('products').select('id,name,category,stock_qty,stock_min,price,cost', { count: 'exact' });
+
+        if (s) {
+            // ค้นหาแบบ: id ตรงเป๊ะ (สำหรับบาร์โค้ด) OR ชื่อมีคำที่ค้น OR id มีคำที่ค้น
+            // ใช้ .or() ของ Supabase — escape comma และ paren ใน search
+            const safe = s.replace(/[,()]/g, '');
+            query = query.or(`id.ilike.%${safe}%,name.ilike.%${safe}%`);
         }
+
+        // ดึงสูงสุด STOCK_PAGE_SIZE แถว (เร็วทันใจบนมือถือ)
+        query = query.order('name').range(0, STOCK_PAGE_SIZE - 1);
+
+        const { data, error, count } = await query;
+        if (error) throw error;
+        const items = data || [];
+        const total = count || items.length;
+
+        // อัปเดต status bar
+        if (statusText) {
+            if (s) {
+                statusText.innerText = `🔍 พบ ${total.toLocaleString()} รายการ${total > items.length ? ` (แสดง ${items.length})` : ''}`;
+            } else {
+                statusText.innerText = `📦 ทั้งหมด ${total.toLocaleString()} รายการ${total > items.length ? ` (แสดง ${items.length} ล่าสุด — พิมพ์เพื่อค้นหา)` : ''}`;
+            }
+        }
+
+        // ── ไม่พบ ──
         if (items.length === 0) {
-            // ✅ แสดงข้อความที่บอก user ว่าค้นด้วยอะไร พร้อมปุ่ม "เพิ่มสินค้านี้"
-            tbody.innerHTML = `<tr><td colspan="9" class="text-center p-8">
-                <div class="text-gray-400 mb-3"><i class="fas fa-search text-3xl mb-2"></i><br>ไม่พบสินค้าที่ตรงกับ <span class="font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700">${searchTerm}</span></div>
-                ${searchTerm ? `<button onclick="quickAddProductFromBarcode('${String(searchTerm).replace(/'/g,"\\'")}')"
-                    class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition active:scale-95 shadow">
-                    <i class="fas fa-plus mr-1"></i> เพิ่มสินค้าใหม่ด้วยรหัสนี้
+            const safeSearch = String(searchTerm).replace(/'/g, "\\'").replace(/</g, '&lt;');
+            content.innerHTML = `<div class="text-center p-8">
+                <div class="text-gray-400 mb-4">
+                    <i class="fas fa-search text-4xl mb-3"></i>
+                    <div class="text-base">ไม่พบสินค้าที่ตรงกับ</div>
+                    <div class="font-mono bg-gray-100 px-3 py-1 rounded mt-2 inline-block text-gray-700 break-all">${safeSearch || '-'}</div>
+                </div>
+                ${searchTerm ? `<button onclick="quickAddProductFromBarcode('${safeSearch}')"
+                    class="bg-blue-500 hover:bg-blue-600 text-white px-5 py-3 rounded-xl text-sm font-bold transition active:scale-95 shadow-lg">
+                    <i class="fas fa-plus mr-2"></i>เพิ่มสินค้าใหม่ด้วยรหัสนี้
                 </button>` : ''}
-            </td></tr>`;
+            </div>`;
             return;
         }
-        tbody.innerHTML = items.map(p => {
-            const qty = p.stock_qty || 0;
-            const min = p.stock_min || 5;
-            const price = parseFloat(p.price || 0);
-            const cost  = parseFloat(p.cost || 0);
-            const profit = price - cost;
-            const profitPct = cost > 0 ? Math.round((profit / cost) * 100) : 0;
-            const profitClass = profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-gray-500';
 
-            let badge = qty <= 0
-                ? `<span class="inline-block bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full">หมด</span>`
-                : qty <= min
-                    ? `<span class="inline-block bg-yellow-100 text-yellow-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ใกล้หมด</span>`
-                    : `<span class="inline-block bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ปกติ</span>`;
-            const barPct = Math.min(Math.round((qty / Math.max(min * 3, 1)) * 100), 100);
-            const barColor = qty <= 0 ? 'bg-red-400' : qty <= min ? 'bg-yellow-400' : 'bg-green-400';
+        // ── Render: Card layout บนมือถือ + Table บนเดสก์ท็อป ──
+        content.innerHTML = `
+            <!-- Mobile: Card layout (แสดงเฉพาะ < md breakpoint) -->
+            <div class="md:hidden p-2 space-y-2">
+                ${items.map(p => renderStockCard(p)).join('')}
+            </div>
 
-            // escape ชื่อสินค้าเวลาส่งเข้า onclick
-            const safeName = (p.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
-            return `<tr class="border-b border-gray-100 hover:bg-green-50/30 transition" data-product-id="${p.id}">
-                <td class="p-2 text-[10px] text-gray-500 font-mono whitespace-nowrap">${p.id}</td>
-                <td class="p-2">
-                    <input type="text" value="${safeName}"
-                           onblur="updateProductField('${p.id}','name',this.value,this)"
-                           onkeydown="if(event.key==='Enter')this.blur()"
-                           class="w-full border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-sm font-bold text-gray-700 bg-transparent focus:bg-white outline-none transition" />
-                </td>
-                <td class="p-2 text-xs text-gray-500 hidden md:table-cell">${p.category || '-'}</td>
-                <td class="p-2">
-                    <input type="number" step="0.01" min="0" value="${cost}"
-                           onblur="updateProductField('${p.id}','cost',this.value,this)"
-                           onkeydown="if(event.key==='Enter')this.blur()"
-                           class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm text-gray-700 bg-transparent focus:bg-white outline-none transition" />
-                </td>
-                <td class="p-2">
-                    <input type="number" step="0.01" min="0" value="${price}"
-                           onblur="updateProductField('${p.id}','price',this.value,this)"
-                           onkeydown="if(event.key==='Enter')this.blur()"
-                           class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm font-bold text-blue-600 bg-transparent focus:bg-white outline-none transition" />
-                </td>
-                <td class="p-2 text-center hidden sm:table-cell">
-                    <span class="${profitClass} font-bold text-xs whitespace-nowrap">
-                        ${profit.toFixed(2)}
-                        <span class="text-[10px] opacity-70">(${profitPct}%)</span>
-                    </span>
-                </td>
-                <td class="p-2">
-                    <div class="flex items-center gap-2">
-                        <div class="flex-1 bg-gray-200 rounded-full h-2 min-w-[40px]"><div class="${barColor} h-2 rounded-full transition-all" style="width:${barPct}%"></div></div>
-                        <span class="text-sm font-bold text-gray-800 w-8 text-right">${qty}</span>
-                    </div>
-                    <div class="mt-1">${badge}</div>
-                </td>
-                <td class="p-2 text-center">
-                    <input type="number" min="1" value="${min}"
-                           onblur="updateStockMin('${p.id}',this.value)"
-                           onkeydown="if(event.key==='Enter')this.blur()"
-                           class="w-14 border border-gray-200 rounded-lg p-1 text-sm text-center focus:border-blue-500 outline-none" />
-                </td>
-                <td class="p-2">
-                    <div class="flex gap-1 justify-center flex-wrap">
-                        <button onclick="adjustStock('${p.id}','${safeName}',${qty},'add')"
-                                class="bg-green-500 text-white text-[10px] px-2 py-1 rounded-lg hover:bg-green-600 transition font-bold whitespace-nowrap" title="เพิ่มสต็อก">
-                            <i class="fas fa-plus"></i>
-                        </button>
-                        <button onclick="adjustStock('${p.id}','${safeName}',${qty},'set')"
-                                class="bg-blue-500 text-white text-[10px] px-2 py-1 rounded-lg hover:bg-blue-600 transition font-bold whitespace-nowrap" title="ตั้งค่าสต็อก">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
+            <!-- Desktop: Table layout (แสดงเฉพาะ >= md breakpoint) -->
+            <div class="hidden md:block">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 z-10 bg-gray-100">
+                        <tr class="border-b-2 border-gray-200">
+                            <th class="p-2 text-left text-xs font-bold text-gray-600 uppercase">รหัส</th>
+                            <th class="p-2 text-left text-xs font-bold text-gray-600 uppercase min-w-[140px]">ชื่อสินค้า</th>
+                            <th class="p-2 text-left text-xs font-bold text-gray-600 uppercase">หมวดหมู่</th>
+                            <th class="p-2 text-right text-xs font-bold text-gray-600 uppercase">ทุน</th>
+                            <th class="p-2 text-right text-xs font-bold text-gray-600 uppercase">ราคาขาย</th>
+                            <th class="p-2 text-center text-xs font-bold text-gray-600 uppercase">กำไร</th>
+                            <th class="p-2 text-left text-xs font-bold text-gray-600 uppercase min-w-[140px]">สต็อก</th>
+                            <th class="p-2 text-center text-xs font-bold text-gray-600 uppercase">ขั้นต่ำ</th>
+                            <th class="p-2 text-center text-xs font-bold text-gray-600 uppercase">จัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white">
+                        ${items.map(p => renderStockRow(p)).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
     } catch(e) {
-        console.error(e);
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center p-4 text-red-400">โหลดไม่ได้: ${e.message}</td></tr>`;
+        console.error('renderStockTable error:', e);
+        content.innerHTML = `<div class="text-center p-6 text-red-500">
+            <i class="fas fa-exclamation-triangle text-3xl mb-2"></i><br>
+            โหลดข้อมูลไม่ได้: ${e.message || e}
+        </div>`;
+        if (statusText) statusText.innerText = '❌ โหลดไม่สำเร็จ';
     }
+}
+
+// ── Render สินค้า 1 รายการแบบการ์ด (สำหรับมือถือ) ──
+function renderStockCard(p) {
+    const qty = p.stock_qty || 0;
+    const min = p.stock_min || 5;
+    const price = parseFloat(p.price || 0);
+    const cost  = parseFloat(p.cost || 0);
+    const profit = price - cost;
+    const profitPct = cost > 0 ? Math.round((profit / cost) * 100) : 0;
+    const profitColor = profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-gray-500';
+
+    let badgeStyle, badgeText, leftBorderColor;
+    if (qty <= 0)        { badgeStyle = 'bg-red-100 text-red-700';     badgeText = '🚫 หมด';     leftBorderColor = 'border-l-red-500'; }
+    else if (qty <= min) { badgeStyle = 'bg-yellow-100 text-yellow-800'; badgeText = '⚠️ ใกล้หมด'; leftBorderColor = 'border-l-yellow-500'; }
+    else                 { badgeStyle = 'bg-green-100 text-green-700'; badgeText = '✓ ปกติ';     leftBorderColor = 'border-l-green-500'; }
+
+    const safeId   = String(p.id).replace(/'/g, "\\'");
+    const safeName = String(p.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+    return `<div class="bg-white rounded-xl shadow-sm border-l-4 ${leftBorderColor} border-y border-r border-gray-200 p-3 active:bg-gray-50 transition">
+        <!-- Row 1: ชื่อ + badge -->
+        <div class="flex items-start justify-between gap-2 mb-2">
+            <input type="text" value="${safeName}"
+                   onblur="updateProductField('${safeId}','name',this.value,this)"
+                   onkeydown="if(event.key==='Enter')this.blur()"
+                   class="flex-1 font-bold text-gray-800 text-base border border-transparent focus:border-blue-400 focus:bg-blue-50 rounded px-2 py-1 outline-none -mx-1 -my-0.5" />
+            <span class="${badgeStyle} text-[10px] font-bold px-2 py-1 rounded-full whitespace-nowrap shrink-0">${badgeText}</span>
+        </div>
+
+        <!-- Row 2: รหัส + หมวด -->
+        <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-2 flex-wrap">
+            <span class="font-mono bg-gray-100 px-2 py-0.5 rounded">${p.id}</span>
+            <span>·</span>
+            <span>${p.category || 'เบ็ดเตล็ด'}</span>
+        </div>
+
+        <!-- Row 3: ทุน / ราคา / กำไร (3 ช่อง) -->
+        <div class="grid grid-cols-3 gap-2 mb-3">
+            <div class="bg-gray-50 rounded-lg p-2">
+                <div class="text-[10px] text-gray-500 font-bold mb-0.5">ทุน</div>
+                <input type="number" inputmode="decimal" step="0.01" min="0" value="${cost}"
+                       onblur="updateProductField('${safeId}','cost',this.value,this)"
+                       onkeydown="if(event.key==='Enter')this.blur()"
+                       class="w-full bg-transparent text-base font-bold text-gray-700 outline-none focus:bg-white focus:ring-2 focus:ring-blue-300 rounded px-1" />
+            </div>
+            <div class="bg-blue-50 rounded-lg p-2">
+                <div class="text-[10px] text-blue-600 font-bold mb-0.5">ราคาขาย</div>
+                <input type="number" inputmode="decimal" step="0.01" min="0" value="${price}"
+                       onblur="updateProductField('${safeId}','price',this.value,this)"
+                       onkeydown="if(event.key==='Enter')this.blur()"
+                       class="w-full bg-transparent text-base font-bold text-blue-700 outline-none focus:bg-white focus:ring-2 focus:ring-blue-400 rounded px-1" />
+            </div>
+            <div class="bg-green-50 rounded-lg p-2">
+                <div class="text-[10px] text-green-700 font-bold mb-0.5">กำไร</div>
+                <div class="text-base font-bold ${profitColor} leading-tight">${profit.toFixed(2)}</div>
+                <div class="text-[9px] ${profitColor} opacity-75">${profitPct}%</div>
+            </div>
+        </div>
+
+        <!-- Row 4: สต็อก progress + จำนวน + ปุ่ม -->
+        <div class="flex items-center gap-2">
+            <div class="flex-1">
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl font-extrabold text-gray-800">${qty}</span>
+                    <div class="flex-1">
+                        <div class="bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div class="${qty <= 0 ? 'bg-red-400' : qty <= min ? 'bg-yellow-400' : 'bg-green-400'} h-2 rounded-full transition-all"
+                                 style="width:${Math.min(Math.round((qty / Math.max(min * 3, 1)) * 100), 100)}%"></div>
+                        </div>
+                        <div class="text-[10px] text-gray-500 mt-0.5">ขั้นต่ำ:
+                            <input type="number" inputmode="numeric" min="1" value="${min}"
+                                   onblur="updateStockMin('${safeId}',this.value)"
+                                   onkeydown="if(event.key==='Enter')this.blur()"
+                                   class="w-12 bg-transparent text-gray-700 font-bold text-center border-b border-gray-300 focus:border-blue-500 outline-none" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col gap-1 shrink-0">
+                <button onclick="adjustStock('${safeId}','${safeName}',${qty},'add')"
+                        class="bg-green-500 hover:bg-green-600 active:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition shadow-sm active:scale-95 flex items-center gap-1">
+                    <i class="fas fa-plus"></i><span>เพิ่ม</span>
+                </button>
+                <button onclick="adjustStock('${safeId}','${safeName}',${qty},'set')"
+                        class="bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition shadow-sm active:scale-95 flex items-center gap-1">
+                    <i class="fas fa-edit"></i><span>ตั้ง</span>
+                </button>
+            </div>
+        </div>
+    </div>`;
+}
+
+// ── Render สินค้า 1 รายการแบบ table row (สำหรับเดสก์ท็อป) ──
+function renderStockRow(p) {
+    const qty = p.stock_qty || 0;
+    const min = p.stock_min || 5;
+    const price = parseFloat(p.price || 0);
+    const cost  = parseFloat(p.cost || 0);
+    const profit = price - cost;
+    const profitPct = cost > 0 ? Math.round((profit / cost) * 100) : 0;
+    const profitClass = profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-gray-500';
+    const badge = qty <= 0
+        ? `<span class="inline-block bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full">หมด</span>`
+        : qty <= min
+            ? `<span class="inline-block bg-yellow-100 text-yellow-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ใกล้หมด</span>`
+            : `<span class="inline-block bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ปกติ</span>`;
+    const barPct = Math.min(Math.round((qty / Math.max(min * 3, 1)) * 100), 100);
+    const barColor = qty <= 0 ? 'bg-red-400' : qty <= min ? 'bg-yellow-400' : 'bg-green-400';
+    const safeId = String(p.id).replace(/'/g, "\\'");
+    const safeName = String(p.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+    return `<tr class="border-b border-gray-100 hover:bg-green-50/30 transition">
+        <td class="p-2 text-[10px] text-gray-500 font-mono whitespace-nowrap">${p.id}</td>
+        <td class="p-2">
+            <input type="text" value="${safeName}"
+                   onblur="updateProductField('${safeId}','name',this.value,this)"
+                   onkeydown="if(event.key==='Enter')this.blur()"
+                   class="w-full border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-sm font-bold text-gray-700 bg-transparent focus:bg-white outline-none" />
+        </td>
+        <td class="p-2 text-xs text-gray-500">${p.category || '-'}</td>
+        <td class="p-2">
+            <input type="number" step="0.01" min="0" value="${cost}"
+                   onblur="updateProductField('${safeId}','cost',this.value,this)"
+                   onkeydown="if(event.key==='Enter')this.blur()"
+                   class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm bg-transparent focus:bg-white outline-none" />
+        </td>
+        <td class="p-2">
+            <input type="number" step="0.01" min="0" value="${price}"
+                   onblur="updateProductField('${safeId}','price',this.value,this)"
+                   onkeydown="if(event.key==='Enter')this.blur()"
+                   class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm font-bold text-blue-600 bg-transparent focus:bg-white outline-none" />
+        </td>
+        <td class="p-2 text-center">
+            <span class="${profitClass} font-bold text-xs whitespace-nowrap">
+                ${profit.toFixed(2)}<span class="text-[10px] opacity-70"> (${profitPct}%)</span>
+            </span>
+        </td>
+        <td class="p-2">
+            <div class="flex items-center gap-2">
+                <div class="flex-1 bg-gray-200 rounded-full h-2 min-w-[40px]"><div class="${barColor} h-2 rounded-full" style="width:${barPct}%"></div></div>
+                <span class="text-sm font-bold text-gray-800 w-8 text-right">${qty}</span>
+            </div>
+            <div class="mt-1">${badge}</div>
+        </td>
+        <td class="p-2 text-center">
+            <input type="number" min="1" value="${min}"
+                   onblur="updateStockMin('${safeId}',this.value)"
+                   onkeydown="if(event.key==='Enter')this.blur()"
+                   class="w-14 border border-gray-200 rounded-lg p-1 text-sm text-center focus:border-blue-500 outline-none" />
+        </td>
+        <td class="p-2">
+            <div class="flex gap-1 justify-center">
+                <button onclick="adjustStock('${safeId}','${safeName}',${qty},'add')"
+                        class="bg-green-500 hover:bg-green-600 text-white text-[10px] px-2 py-1 rounded-lg font-bold whitespace-nowrap" title="เพิ่มสต็อก">
+                    <i class="fas fa-plus"></i>
+                </button>
+                <button onclick="adjustStock('${safeId}','${safeName}',${qty},'set')"
+                        class="bg-blue-500 hover:bg-blue-600 text-white text-[10px] px-2 py-1 rounded-lg font-bold whitespace-nowrap" title="ตั้งค่า">
+                    <i class="fas fa-edit"></i>
+                </button>
+            </div>
+        </td>
+    </tr>`;
 }
 
 // ═══════════════════════════════════════════════════════════
