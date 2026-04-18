@@ -323,8 +323,11 @@ async function buildReceiptBytes(bill) {
     // ── โหลด QR images (ถ้ามี) ──
     // QR 1: รูปจาก Supabase Storage (bankQR ที่ตั้งค่าไว้)
     // QR 2: ลิงก์สั่งซื้อออนไลน์ สร้างจาก QR API
-    const QR_SIZE = 160; // px บน canvas
-    const QR_GAP  = 12;  // ระยะห่างระหว่าง QR
+    // ⭐️ ต้องใหญ่พอที่กล้องมือถือสแกนได้บนกระดาษ thermal 58mm
+    // PAPER_W = 384 dots, QR_SIZE = 320 → ~83% ของกระดาษ = ~48mm บนกระดาษจริง (สแกนง่าย)
+    // ⭐️ ขอจาก API ขนาด "เท่ากับ" QR_SIZE เพื่อไม่ต้อง resize (ป้องกัน blur)
+    const QR_SIZE = 320;
+    const QR_GAP  = 12;
 
     // ฟังก์ชันโหลดรูปเป็น HTMLImageElement
     const loadImg = (src) => new Promise((resolve) => {
@@ -336,8 +339,11 @@ async function buildReceiptBytes(bill) {
     });
 
     // โหลด QR สั่งซื้อออนไลน์เสมอ
+    // ⭐️ ขอ QR จาก API ขนาดเท่ากับ QR_SIZE (จะได้ไม่ต้อง resize → ไม่เบลอ)
+    // ⭐️ margin=2 = quiet zone รอบ QR (จำเป็นสำหรับการสแกน)
+    // ⭐️ ecc=H = error correction สูง ทนทานต่อการปริ้นเลือนได้ดีกว่า
     const orderUrl  = window.location.href.split('?')[0] + '?mode=customer';
-    const orderQRSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(orderUrl)}`;
+    const orderQRSrc = `https://api.qrserver.com/v1/create-qr-code/?size=${QR_SIZE}x${QR_SIZE}&margin=2&ecc=H&data=${encodeURIComponent(orderUrl)}`;
 
     // โหลด bankQR จาก Storage (ถ้ามี)
     let bankQRSrc = null;
@@ -420,6 +426,10 @@ async function buildReceiptBytes(bill) {
     // ── วาด QR Codes ท้ายใบเสร็จ ──
     if (qrCount > 0) {
         y += 8;
+
+        // ⭐️ สำคัญมาก: ปิด image smoothing เพื่อให้ pixel ของ QR คมชัด
+        // ไม่งั้นจะเบลอ → เครื่องปริ้น thermal threshold เป็น 1-bit จะกลายเป็นจุดขาดๆ → สแกนไม่ได้
+        ctx.imageSmoothingEnabled = false;
 
         if (qrCount === 2) {
             // วาดสอง QR เรียงบน-ล่าง กึ่งกลาง
@@ -926,48 +936,145 @@ async function openStockModal() {
 
 async function renderStockTable(searchTerm = '') {
     const tbody = document.getElementById('stockTableBody');
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center p-6 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl"></i></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center p-6 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl"></i></td></tr>';
     try {
-        let query = _supa.from('products').select('id,name,category,stock_qty,stock_min,price').order('name');
-        const { data, error } = await query;
+        const { data, error } = await _supa.from('products').select('id,name,category,stock_qty,stock_min,price,cost').order('name');
         if (error) throw error;
         let items = data || [];
-        if (searchTerm) items = items.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.id.toLowerCase().includes(searchTerm.toLowerCase()));
+        if (searchTerm) {
+            const s = searchTerm.toLowerCase().trim();
+            items = items.filter(p => p.name.toLowerCase().includes(s) || p.id.toLowerCase().includes(s));
+        }
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center p-6 text-gray-400">ไม่พบสินค้า</td></tr>'; return;
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center p-6 text-gray-400">ไม่พบสินค้า</td></tr>'; return;
         }
         tbody.innerHTML = items.map(p => {
-            const qty = p.stock_qty || 0; const min = p.stock_min || 5;
+            const qty = p.stock_qty || 0;
+            const min = p.stock_min || 5;
+            const price = parseFloat(p.price || 0);
+            const cost  = parseFloat(p.cost || 0);
+            const profit = price - cost;
+            const profitPct = cost > 0 ? Math.round((profit / cost) * 100) : 0;
+            const profitClass = profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-gray-500';
+
             let badge = qty <= 0
-                ? `<span class="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">หมด</span>`
+                ? `<span class="inline-block bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full">หมด</span>`
                 : qty <= min
-                    ? `<span class="bg-yellow-100 text-yellow-700 text-xs font-bold px-2 py-0.5 rounded-full">ใกล้หมด</span>`
-                    : `<span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">ปกติ</span>`;
+                    ? `<span class="inline-block bg-yellow-100 text-yellow-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ใกล้หมด</span>`
+                    : `<span class="inline-block bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full">ปกติ</span>`;
             const barPct = Math.min(Math.round((qty / Math.max(min * 3, 1)) * 100), 100);
             const barColor = qty <= 0 ? 'bg-red-400' : qty <= min ? 'bg-yellow-400' : 'bg-green-400';
-            return `<tr class="border-b border-gray-100 hover:bg-gray-50 transition">
-                <td class="p-3 text-xs text-gray-500 font-mono">${p.id}</td>
-                <td class="p-3 font-bold text-gray-700">${p.name}</td>
-                <td class="p-3 text-xs text-gray-500">${p.category}</td>
-                <td class="p-3">
+
+            // escape ชื่อสินค้าเวลาส่งเข้า onclick
+            const safeName = (p.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+            return `<tr class="border-b border-gray-100 hover:bg-green-50/30 transition" data-product-id="${p.id}">
+                <td class="p-2 text-[10px] text-gray-500 font-mono whitespace-nowrap">${p.id}</td>
+                <td class="p-2">
+                    <input type="text" value="${safeName}"
+                           onblur="updateProductField('${p.id}','name',this.value,this)"
+                           onkeydown="if(event.key==='Enter')this.blur()"
+                           class="w-full border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-sm font-bold text-gray-700 bg-transparent focus:bg-white outline-none transition" />
+                </td>
+                <td class="p-2 text-xs text-gray-500 hidden md:table-cell">${p.category || '-'}</td>
+                <td class="p-2">
+                    <input type="number" step="0.01" min="0" value="${cost}"
+                           onblur="updateProductField('${p.id}','cost',this.value,this)"
+                           onkeydown="if(event.key==='Enter')this.blur()"
+                           class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm text-gray-700 bg-transparent focus:bg-white outline-none transition" />
+                </td>
+                <td class="p-2">
+                    <input type="number" step="0.01" min="0" value="${price}"
+                           onblur="updateProductField('${p.id}','price',this.value,this)"
+                           onkeydown="if(event.key==='Enter')this.blur()"
+                           class="w-20 border border-transparent hover:border-gray-300 focus:border-blue-500 rounded px-2 py-1 text-right text-sm font-bold text-blue-600 bg-transparent focus:bg-white outline-none transition" />
+                </td>
+                <td class="p-2 text-center hidden sm:table-cell">
+                    <span class="${profitClass} font-bold text-xs whitespace-nowrap">
+                        ${profit.toFixed(2)}
+                        <span class="text-[10px] opacity-70">(${profitPct}%)</span>
+                    </span>
+                </td>
+                <td class="p-2">
                     <div class="flex items-center gap-2">
-                        <div class="flex-1 bg-gray-200 rounded-full h-2"><div class="${barColor} h-2 rounded-full" style="width:${barPct}%"></div></div>
+                        <div class="flex-1 bg-gray-200 rounded-full h-2 min-w-[40px]"><div class="${barColor} h-2 rounded-full transition-all" style="width:${barPct}%"></div></div>
                         <span class="text-sm font-bold text-gray-800 w-8 text-right">${qty}</span>
                     </div>
-                    ${badge}
+                    <div class="mt-1">${badge}</div>
                 </td>
-                <td class="p-3">
-                    <input type="number" min="1" value="${min}" onchange="updateStockMin('${p.id}',this.value)"
-                        class="w-16 border border-gray-200 rounded-lg p-1 text-sm text-center focus:border-blue-500 outline-none">
+                <td class="p-2 text-center">
+                    <input type="number" min="1" value="${min}"
+                           onblur="updateStockMin('${p.id}',this.value)"
+                           onkeydown="if(event.key==='Enter')this.blur()"
+                           class="w-14 border border-gray-200 rounded-lg p-1 text-sm text-center focus:border-blue-500 outline-none" />
                 </td>
-                <td class="p-3 flex gap-1">
-                    <button onclick="adjustStock('${p.id}','${p.name}',${qty},'add')" class="bg-green-500 text-white text-xs px-2 py-1 rounded-lg hover:bg-green-600 transition font-bold">+เพิ่ม</button>
-                    <button onclick="adjustStock('${p.id}','${p.name}',${qty},'set')" class="bg-blue-500 text-white text-xs px-2 py-1 rounded-lg hover:bg-blue-600 transition font-bold">ตั้งค่า</button>
+                <td class="p-2">
+                    <div class="flex gap-1 justify-center flex-wrap">
+                        <button onclick="adjustStock('${p.id}','${safeName}',${qty},'add')"
+                                class="bg-green-500 text-white text-[10px] px-2 py-1 rounded-lg hover:bg-green-600 transition font-bold whitespace-nowrap" title="เพิ่มสต็อก">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <button onclick="adjustStock('${p.id}','${safeName}',${qty},'set')"
+                                class="bg-blue-500 text-white text-[10px] px-2 py-1 rounded-lg hover:bg-blue-600 transition font-bold whitespace-nowrap" title="ตั้งค่าสต็อก">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                    </div>
                 </td>
             </tr>`;
         }).join('');
     } catch(e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center p-4 text-red-400">โหลดไม่ได้: ${e.message}</td></tr>`;
+        console.error(e);
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center p-4 text-red-400">โหลดไม่ได้: ${e.message}</td></tr>`;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// แก้ไขชื่อ / ทุน / ราคา ของสินค้า inline
+// ═══════════════════════════════════════════════════════════
+async function updateProductField(productId, field, newValue, inputEl) {
+    let updateData = {};
+    if (field === 'name') {
+        const trimmed = (newValue || '').trim();
+        if (!trimmed) {
+            showToast('ชื่อสินค้าห้ามว่าง', 'warning');
+            // refresh เพื่อคืนค่าเดิม
+            renderStockTable(document.getElementById('stockSearchInput')?.value || '');
+            return;
+        }
+        updateData.name = trimmed;
+    } else if (field === 'cost' || field === 'price') {
+        const num = parseFloat(newValue);
+        if (isNaN(num) || num < 0) {
+            showToast('ตัวเลขไม่ถูกต้อง', 'warning');
+            renderStockTable(document.getElementById('stockSearchInput')?.value || '');
+            return;
+        }
+        updateData[field] = num;
+    } else {
+        return;
+    }
+
+    // เช็คว่าเปลี่ยนจริงหรือไม่ (เผื่อ onblur ถูก trigger โดยไม่ได้แก้)
+    const { data: current } = await _supa.from('products').select(field).eq('id', productId).single();
+    if (current && String(current[field]) === String(updateData[field])) return; // ไม่เปลี่ยน
+
+    const { error } = await _supa.from('products').update(updateData).eq('id', productId);
+    if (error) {
+        showToast('อัปเดตไม่สำเร็จ: ' + error.message, 'warning');
+        renderStockTable(document.getElementById('stockSearchInput')?.value || '');
+        return;
+    }
+    showToast(`อัปเดต${field === 'name' ? 'ชื่อ' : field === 'cost' ? 'ทุน' : 'ราคา'}แล้ว`, 'success');
+    // refresh เพื่อคำนวณกำไรใหม่และล้าง cache เมนู
+    localStorage.removeItem('cachedMenuData');
+    // ใช้ flash effect ที่ input แทน re-render ทั้งตาราง (ดีกว่าเพราะ user อาจกำลังแก้ field อื่นอยู่)
+    if (inputEl) {
+        inputEl.style.backgroundColor = '#d1fae5';
+        setTimeout(() => { inputEl.style.backgroundColor = ''; }, 600);
+    }
+    // re-render เฉพาะเมื่อเปลี่ยน price/cost เพราะกำไรเปลี่ยน
+    if (field === 'cost' || field === 'price') {
+        setTimeout(() => renderStockTable(document.getElementById('stockSearchInput')?.value || ''), 650);
     }
 }
 
@@ -990,6 +1097,119 @@ async function adjustStock(productId, productName, currentQty, mode) {
     if (error) { showToast('อัปเดตไม่สำเร็จ', 'warning'); return; }
     showToast(`อัปเดตสต็อก "${productName}" → ${newQty} ชิ้น`, 'success');
     renderStockTable(document.getElementById('stockSearchInput')?.value || '');
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📷 BARCODE SCANNER (html5-qrcode)
+// ═══════════════════════════════════════════════════════════
+let _barcodeScanner = null;
+let _barcodeTargetInputId = null;
+let _barcodeCurrentCamera = 'environment'; // 'environment' = กล้องหลัง (default), 'user' = กล้องหน้า
+
+async function openBarcodeScanner(targetInputId = 'stockSearchInput') {
+    _barcodeTargetInputId = targetInputId;
+
+    // เช็คว่าไลบรารีโหลดมาแล้วหรือยัง
+    if (typeof Html5Qrcode === 'undefined') {
+        showCustomAlert('ผิดพลาด', 'ไลบรารีสแกนบาร์โค้ดยังไม่พร้อม กรุณา refresh หน้าจอ');
+        return;
+    }
+
+    document.getElementById('barcodeScannerModal').classList.remove('hidden');
+    document.getElementById('barcodeHint').innerText = 'กำลังเปิดกล้อง...';
+
+    // รอให้ modal render เสร็จก่อน init scanner
+    await new Promise(r => setTimeout(r, 100));
+
+    try {
+        _barcodeScanner = new Html5Qrcode('barcodeReader');
+        await _startBarcodeCamera(_barcodeCurrentCamera);
+    } catch(e) {
+        console.error('scanner init error', e);
+        document.getElementById('barcodeHint').innerText = 'เปิดกล้องไม่ได้: ' + (e.message || e);
+    }
+}
+
+async function _startBarcodeCamera(facingMode) {
+    if (!_barcodeScanner) return;
+    const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 150 }, // กรอบแนวนอน เหมาะกับบาร์โค้ด
+        aspectRatio: 1.5,
+        // รองรับทั้ง QR และ 1D barcode
+        formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.CODABAR
+        ]
+    };
+    try {
+        await _barcodeScanner.start(
+            { facingMode: facingMode },
+            config,
+            onBarcodeScanSuccess,
+            () => {} // ignore scan failure (non-fatal, เกิดตลอดเวลาระหว่างสแกน)
+        );
+        document.getElementById('barcodeHint').innerText = 'จัดบาร์โค้ดให้อยู่ในกรอบ';
+    } catch(e) {
+        console.error('camera start error', e);
+        const hint = document.getElementById('barcodeHint');
+        if (e && (e.name === 'NotAllowedError' || String(e).includes('Permission'))) {
+            hint.innerText = '❌ ไม่ได้รับอนุญาตให้ใช้กล้อง กรุณาอนุญาตในเบราว์เซอร์';
+        } else if (e && String(e).includes('NotFound')) {
+            hint.innerText = '❌ ไม่พบกล้อง หรือเบราว์เซอร์ไม่รองรับ';
+        } else {
+            hint.innerText = '❌ เปิดกล้องไม่ได้: ' + (e.message || e);
+        }
+    }
+}
+
+function onBarcodeScanSuccess(decodedText) {
+    if (!decodedText) return;
+    // เติมค่าลง input target
+    const target = document.getElementById(_barcodeTargetInputId);
+    if (target) {
+        target.value = decodedText;
+        // trigger event เพื่อให้ renderStockTable ถูกเรียก (ถ้า target มี oninput)
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        target.focus();
+    }
+    // bleep เพื่อ feedback
+    try { playNotificationSound(); } catch(e) {}
+    showToast(`สแกนได้: ${decodedText}`, 'success');
+    closeBarcodeScanner();
+}
+
+async function closeBarcodeScanner() {
+    if (_barcodeScanner) {
+        try {
+            // ต้อง stop ก่อน clear เพื่อไม่ให้กล้องค้าง
+            if (_barcodeScanner.isScanning) {
+                await _barcodeScanner.stop();
+            }
+            await _barcodeScanner.clear();
+        } catch(e) { console.warn('stop scanner err', e); }
+        _barcodeScanner = null;
+    }
+    document.getElementById('barcodeScannerModal').classList.add('hidden');
+}
+
+async function switchBarcodeCamera() {
+    _barcodeCurrentCamera = _barcodeCurrentCamera === 'environment' ? 'user' : 'environment';
+    if (!_barcodeScanner) return;
+    try {
+        if (_barcodeScanner.isScanning) await _barcodeScanner.stop();
+        await _startBarcodeCamera(_barcodeCurrentCamera);
+        showToast(`สลับไป${_barcodeCurrentCamera === 'user' ? 'กล้องหน้า' : 'กล้องหลัง'}แล้ว`, 'success');
+    } catch(e) {
+        console.error('switch camera err', e);
+    }
 }
 
 // ============================================================
