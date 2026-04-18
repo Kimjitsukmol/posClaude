@@ -1104,69 +1104,110 @@ async function adjustStock(productId, productName, currentQty, mode) {
 // ═══════════════════════════════════════════════════════════
 let _barcodeScanner = null;
 let _barcodeTargetInputId = null;
-let _barcodeCurrentCamera = 'environment'; // 'environment' = กล้องหลัง (default), 'user' = กล้องหน้า
+let _barcodeCurrentCamera = 'environment'; // 'environment' = กล้องหลัง (default)
 
 async function openBarcodeScanner(targetInputId = 'stockSearchInput') {
     _barcodeTargetInputId = targetInputId;
 
-    // เช็คว่าไลบรารีโหลดมาแล้วหรือยัง
+    // ── ขั้นตอนที่ 1: เช็คความพร้อมของระบบ ก่อนเปิด modal ──
+    // 1A. ไลบรารีโหลดมาหรือยัง
     if (typeof Html5Qrcode === 'undefined') {
-        showCustomAlert('ผิดพลาด', 'ไลบรารีสแกนบาร์โค้ดยังไม่พร้อม กรุณา refresh หน้าจอ');
+        alert('❌ ไลบรารีสแกนบาร์โค้ดยังไม่พร้อม\n\nกรุณา:\n1. ตรวจสอบว่าเครือข่ายอินเทอร์เน็ตปกติ\n2. รีเฟรชหน้าจอ (Pull-to-refresh)');
+        return;
+    }
+    // 1B. เบราว์เซอร์รองรับกล้องไหม (mediaDevices API)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('❌ เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง\n\nกรุณาใช้ Chrome หรือ Safari เวอร์ชันใหม่');
+        return;
+    }
+    // 1C. ต้อง HTTPS (หรือ localhost) เท่านั้น — เป็นข้อบังคับของเบราว์เซอร์
+    const isSecure = window.isSecureContext ||
+                     location.protocol === 'https:' ||
+                     location.hostname === 'localhost' ||
+                     location.hostname === '127.0.0.1';
+    if (!isSecure) {
+        alert('❌ การใช้กล้องต้องใช้ HTTPS\n\nหน้านี้เปิดผ่าน ' + location.protocol + ' ซึ่งเบราว์เซอร์ไม่อนุญาตให้เข้าถึงกล้อง\n\nกรุณาเปิดเว็บผ่าน https:// หรือ localhost');
         return;
     }
 
+    // ── ขั้นตอนที่ 2: เปิด modal ──
     document.getElementById('barcodeScannerModal').classList.remove('hidden');
-    document.getElementById('barcodeHint').innerText = 'กำลังเปิดกล้อง...';
+    document.getElementById('barcodeHint').innerText = 'กำลังเตรียมกล้อง...';
 
-    // รอให้ modal render เสร็จก่อน init scanner
-    await new Promise(r => setTimeout(r, 100));
-
-    try {
-        _barcodeScanner = new Html5Qrcode('barcodeReader');
-        await _startBarcodeCamera(_barcodeCurrentCamera);
-    } catch(e) {
-        console.error('scanner init error', e);
-        document.getElementById('barcodeHint').innerText = 'เปิดกล้องไม่ได้: ' + (e.message || e);
+    // เคลียร์ scanner เก่าถ้ามี (กรณีเปิดซ้ำ)
+    if (_barcodeScanner) {
+        try { if (_barcodeScanner.isScanning) await _barcodeScanner.stop(); } catch(e) {}
+        try { await _barcodeScanner.clear(); } catch(e) {}
+        _barcodeScanner = null;
     }
+
+    // เคลียร์ DOM ของ reader (กรณีมี element เก่าค้าง)
+    const readerEl = document.getElementById('barcodeReader');
+    if (readerEl) readerEl.innerHTML = '';
+
+    // รอให้ DOM render เสร็จก่อน new Html5Qrcode (สำคัญมากบน iOS)
+    await new Promise(r => setTimeout(r, 200));
+
+    // ── ขั้นตอนที่ 3: สร้าง scanner instance + เริ่มกล้อง ──
+    try {
+        _barcodeScanner = new Html5Qrcode('barcodeReader', /* verbose */ false);
+    } catch(e) {
+        console.error('Html5Qrcode constructor failed:', e);
+        document.getElementById('barcodeHint').innerText = '❌ สร้าง scanner ไม่ได้: ' + (e.message || e);
+        alert('❌ สร้าง scanner ไม่ได้: ' + (e.message || e));
+        return;
+    }
+
+    await _startBarcodeCamera(_barcodeCurrentCamera);
 }
 
 async function _startBarcodeCamera(facingMode) {
     if (!_barcodeScanner) return;
+    const hint = document.getElementById('barcodeHint');
+
+    // ── config: ไม่ใช้ Html5QrcodeSupportedFormats เพื่อหลีกเลี่ยงปัญหา UMD bundle ──
+    // ปล่อยให้ default รองรับทุก format
     const config = {
         fps: 10,
-        qrbox: { width: 250, height: 150 }, // กรอบแนวนอน เหมาะกับบาร์โค้ด
-        aspectRatio: 1.5,
-        // รองรับทั้ง QR และ 1D barcode
-        formatsToSupport: [
-            Html5QrcodeSupportedFormats.QR_CODE,
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.CODE_39,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.UPC_E,
-            Html5QrcodeSupportedFormats.ITF,
-            Html5QrcodeSupportedFormats.CODABAR
-        ]
+        qrbox: function(viewfinderWidth, viewfinderHeight) {
+            // กรอบสแกนที่ adaptive ตามขนาดวีดีโอ
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const qrSize = Math.floor(minEdge * 0.75);
+            return { width: qrSize, height: Math.floor(qrSize * 0.6) };
+        }
     };
+
     try {
+        hint.innerText = 'กำลังขออนุญาตเข้าถึงกล้อง...';
         await _barcodeScanner.start(
             { facingMode: facingMode },
             config,
             onBarcodeScanSuccess,
-            () => {} // ignore scan failure (non-fatal, เกิดตลอดเวลาระหว่างสแกน)
+            () => {} // ignore individual scan failures (เกิดทุกเฟรมที่หาไม่เจอ)
         );
-        document.getElementById('barcodeHint').innerText = 'จัดบาร์โค้ดให้อยู่ในกรอบ';
+        hint.innerText = '📱 จัดบาร์โค้ดให้อยู่ในกรอบ ระบบจะอ่านอัตโนมัติ';
     } catch(e) {
-        console.error('camera start error', e);
-        const hint = document.getElementById('barcodeHint');
-        if (e && (e.name === 'NotAllowedError' || String(e).includes('Permission'))) {
-            hint.innerText = '❌ ไม่ได้รับอนุญาตให้ใช้กล้อง กรุณาอนุญาตในเบราว์เซอร์';
-        } else if (e && String(e).includes('NotFound')) {
-            hint.innerText = '❌ ไม่พบกล้อง หรือเบราว์เซอร์ไม่รองรับ';
+        console.error('Camera start error:', e);
+        // แปลง error เป็นข้อความที่ user เข้าใจ
+        let userMsg = '';
+        const errStr = String(e?.message || e || '');
+        const errName = e?.name || '';
+
+        if (errName === 'NotAllowedError' || errStr.includes('Permission') || errStr.includes('denied')) {
+            userMsg = '❌ ไม่ได้รับอนุญาตให้ใช้กล้อง\n\nวิธีแก้:\n• Chrome: แตะรูปแม่กุญแจใน address bar → อนุญาตกล้อง\n• Safari: ตั้งค่า → Safari → กล้อง → อนุญาต';
+        } else if (errName === 'NotFoundError' || errStr.includes('NotFound') || errStr.includes('no camera')) {
+            userMsg = '❌ ไม่พบกล้องในอุปกรณ์นี้';
+        } else if (errName === 'NotReadableError' || errStr.includes('in use') || errStr.includes('NotReadable')) {
+            userMsg = '❌ กล้องถูกใช้งานอยู่โดยแอปอื่น\n\nกรุณาปิดแอปกล้องอื่นๆ แล้วลองใหม่';
+        } else if (errName === 'OverconstrainedError' || errStr.includes('Overconstrained')) {
+            userMsg = '❌ กล้องนี้ไม่รองรับโหมดที่เลือก กำลังลองสลับกล้อง...';
+            // ลอง fallback ไปใช้กล้องอีกฝั่งอัตโนมัติ
+            setTimeout(() => switchBarcodeCamera(), 800);
         } else {
-            hint.innerText = '❌ เปิดกล้องไม่ได้: ' + (e.message || e);
+            userMsg = '❌ เปิดกล้องไม่ได้\n\nรายละเอียด: ' + errStr;
         }
+        hint.innerText = userMsg.split('\n')[0];
+        alert(userMsg);
     }
 }
 
@@ -1176,7 +1217,6 @@ function onBarcodeScanSuccess(decodedText) {
     const target = document.getElementById(_barcodeTargetInputId);
     if (target) {
         target.value = decodedText;
-        // trigger event เพื่อให้ renderStockTable ถูกเรียก (ถ้า target มี oninput)
         target.dispatchEvent(new Event('input', { bubbles: true }));
         target.focus();
     }
@@ -1189,14 +1229,16 @@ function onBarcodeScanSuccess(decodedText) {
 async function closeBarcodeScanner() {
     if (_barcodeScanner) {
         try {
-            // ต้อง stop ก่อน clear เพื่อไม่ให้กล้องค้าง
-            if (_barcodeScanner.isScanning) {
-                await _barcodeScanner.stop();
-            }
-            await _barcodeScanner.clear();
+            if (_barcodeScanner.isScanning) await _barcodeScanner.stop();
         } catch(e) { console.warn('stop scanner err', e); }
+        try {
+            await _barcodeScanner.clear();
+        } catch(e) { console.warn('clear scanner err', e); }
         _barcodeScanner = null;
     }
+    // เคลียร์ DOM ด้วย เผื่อมี element ค้าง
+    const readerEl = document.getElementById('barcodeReader');
+    if (readerEl) readerEl.innerHTML = '';
     document.getElementById('barcodeScannerModal').classList.add('hidden');
 }
 
@@ -1209,6 +1251,7 @@ async function switchBarcodeCamera() {
         showToast(`สลับไป${_barcodeCurrentCamera === 'user' ? 'กล้องหน้า' : 'กล้องหลัง'}แล้ว`, 'success');
     } catch(e) {
         console.error('switch camera err', e);
+        showToast('สลับกล้องไม่สำเร็จ: ' + (e.message || e), 'warning');
     }
 }
 
