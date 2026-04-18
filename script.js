@@ -77,6 +77,84 @@ async function loadShopInfoToForm() {
     set('shopFooterInput',  info.footer  || 'ขอบคุณที่ใช้บริการค่ะ');
 }
 
+// ═══════════════════════════════════════════════════════════
+// 🛵 DELIVERY SETTINGS — เปิด/ปิดรับออเดอร์ + ยอดขั้นต่ำ
+// ═══════════════════════════════════════════════════════════
+// cache ค่าล่าสุด (ไว้ใช้ตอน enforce ยอดขั้นต่ำ)
+let _deliverySettings = { isActive: true, minOrder: 100 };
+
+async function getDeliverySettings() {
+    try {
+        const s = await dbGet('settings', 'deliverySettings');
+        if (s && s.value) {
+            _deliverySettings = {
+                isActive: s.value.isActive !== false,  // default true
+                minOrder: parseFloat(s.value.minOrder) || 100
+            };
+        }
+    } catch(e) { console.warn('load delivery settings err:', e); }
+    return _deliverySettings;
+}
+
+async function saveDeliverySettings() {
+    const toggle = document.getElementById('deliveryActiveToggle');
+    const minInput = document.getElementById('deliveryMinOrderInput');
+    const isActive = toggle ? toggle.checked : true;
+    const minOrder = minInput ? (parseFloat(minInput.value) || 0) : 100;
+
+    if (minOrder < 0) {
+        showToast('ยอดขั้นต่ำต้องมากกว่าหรือเท่ากับ 0', 'warning');
+        return;
+    }
+
+    const newSettings = { isActive, minOrder };
+    _deliverySettings = newSettings;
+    try {
+        await dbPut('settings', { key: 'deliverySettings', value: newSettings });
+        showToast(`บันทึกการตั้งค่าเดลิเวอรี่แล้ว ${isActive ? '✅ เปิดรับออเดอร์' : '🚫 ปิดรับออเดอร์'}`, 'success');
+        updateDeliveryStatusLabel();
+    } catch(e) {
+        showToast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'warning');
+    }
+}
+
+async function loadDeliverySettingsToForm() {
+    const s = await getDeliverySettings();
+    const toggle = document.getElementById('deliveryActiveToggle');
+    const minInput = document.getElementById('deliveryMinOrderInput');
+    if (toggle) toggle.checked = s.isActive;
+    if (minInput) minInput.value = s.minOrder;
+    updateDeliveryStatusLabel();
+}
+
+function updateDeliveryStatusLabel() {
+    const toggle = document.getElementById('deliveryActiveToggle');
+    const label = document.getElementById('deliveryStatusLabel');
+    if (!toggle || !label) return;
+    if (toggle.checked) {
+        label.innerText = '✅ เปิดรับออเดอร์เดลิเวอรี่';
+        label.className = 'mt-2 text-xs font-bold text-center py-1.5 rounded-lg bg-green-100 text-green-700 border border-green-200';
+    } else {
+        label.innerText = '🚫 ปิดรับออเดอร์เดลิเวอรี่';
+        label.className = 'mt-2 text-xs font-bold text-center py-1.5 rounded-lg bg-red-100 text-red-700 border border-red-200';
+    }
+}
+
+// เช็คสถานะเดลิเวอรี่ — เรียกตอนโหมดลูกค้าเข้าระบบ
+// ถ้าปิด → แสดง storeClosedModal และบล็อกการใช้งาน
+async function checkDeliveryStatus() {
+    const s = await getDeliverySettings();
+    if (!s.isActive) {
+        const modal = document.getElementById('storeClosedModal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+        return false;
+    }
+    return true;
+}
+
 
 // แสดง alert แบบ iOS-friendly เมื่อ Bluetooth ไม่รองรับ
 function showIOSNoPrintAlert() {
@@ -1765,9 +1843,17 @@ function filterMenu(category) {
         filtered = filtered.filter(m => m.category === 'สินค้าเดลิเวอรี่');
     } else if (category !== 'All') {
         filtered = filtered.filter(m => m.category === category);
+    } else {
+        // ✅ โหมดผู้ขาย "ทั้งหมด": ซ่อนสินค้าเดลิเวอรี่ (จะเห็นเฉพาะเมื่อกดหมวดเดลิเวอรี่โดยตรง)
+        filtered = filtered.filter(m => m.category !== 'สินค้าเดลิเวอรี่');
     }
     if (searchText) {
-        filtered = filtered.filter(m => m.name.toLowerCase().includes(searchText) || (m.id && String(m.id).toLowerCase().includes(searchText)));
+        if (isCustomerMode) {
+            // ✅ ลูกค้า: ค้นเฉพาะชื่อสินค้า (ไม่ค้น id/บาร์โค้ด)
+            filtered = filtered.filter(m => m.name.toLowerCase().includes(searchText));
+        } else {
+            filtered = filtered.filter(m => m.name.toLowerCase().includes(searchText) || (m.id && String(m.id).toLowerCase().includes(searchText)));
+        }
         if (category === 'All') { document.querySelectorAll('.cat-btn').forEach(btn => btn.className = "cat-btn bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 px-5 py-2 rounded-full shadow-sm text-sm font-medium transition border border-gray-200 shrink-0"); }
     } else if (category === 'All') {
         filtered.sort((a, b) => categories.indexOf(a.category) - categories.indexOf(b.category));
@@ -1878,9 +1964,20 @@ function renderCart() {
     if(changeWrapper) { changeWrapper.classList.add('hidden','opacity-0','translate-y-4'); changeWrapper.classList.remove('flex','opacity-100','translate-y-0'); }
     if(totalEl) { totalEl.classList.remove('text-4xl','translate-y-[-5px]'); totalEl.classList.add('text-7xl'); }
     let btnClassDesktop = "", btnHtmlDesktop = "", btnHtmlMobile = "", btnClassMobile = "";
+    // คำนวณยอดรวมล่วงหน้าเพื่อเช็คยอดขั้นต่ำ
+    const _preTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
     if (isCustomerMode) {
-        btnClassDesktop = "hidden"; btnHtmlMobile = '<span>ยืนยันรายการ</span> <i class="fas fa-check-circle"></i>';
-        btnClassMobile = "w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-3.5 rounded-xl shadow-lg transition transform active:scale-95 flex justify-center items-center gap-2";
+        btnClassDesktop = "hidden";
+        const minOrder = (_deliverySettings && _deliverySettings.minOrder) || 100;
+        const shortBy = minOrder - _preTotal;
+        if (shortBy > 0) {
+            // ยังไม่พอขั้นต่ำ — แสดงยอดที่ต้องเพิ่ม + ปุ่มเทา (ยังกดได้แต่จะเตือน)
+            btnHtmlMobile = `<span class="text-sm">ต้องซื้ออีก ${shortBy.toLocaleString()} ฿</span> <i class="fas fa-coins"></i>`;
+            btnClassMobile = "w-full bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-white font-bold py-3.5 rounded-xl shadow-lg transition transform active:scale-95 flex justify-center items-center gap-2";
+        } else {
+            btnHtmlMobile = '<span>🛵 สั่งเดลิเวอรี่</span> <i class="fas fa-check-circle"></i>';
+            btnClassMobile = "w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-3.5 rounded-xl shadow-lg transition transform active:scale-95 flex justify-center items-center gap-2";
+        }
     } else {
         btnClassDesktop = "h-12 bg-gradient-to-b from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold text-lg rounded-lg shadow-md border-b-4 border-blue-800 active:border-b-0 active:translate-y-1 transition-all flex flex-col items-center justify-center gap-1";
         btnHtmlDesktop = '<span class="text-xs font-normal opacity-80"></span><i class="fas fa-check-circle text-2xl"></i>';
@@ -1971,7 +2068,27 @@ function toggleAddressFields() {
 async function submitOrder() {
     setLoading('btnSubmitOrder', true, 'กำลังบันทึก...');
     const total = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-    if (isCustomerMode && total < 100) { setLoading('btnSubmitOrder', false, 'ยืนยันรายการ'); return; }
+    // ✅ เช็คยอดขั้นต่ำจาก delivery settings (แทน hardcode 100)
+    if (isCustomerMode) {
+        const minOrder = (_deliverySettings && _deliverySettings.minOrder) || 100;
+        if (total < minOrder) {
+            const shortBy = minOrder - total;
+            showCustomAlert(
+                `⚠️ ยอดสั่งซื้อขั้นต่ำ ${minOrder.toLocaleString()} บาท`,
+                `กรุณาเลือกสินค้าเพิ่มอีก ${shortBy.toLocaleString()} บาท\nจึงจะสั่งเดลิเวอรี่ได้ค่ะ`,
+                '<i class="fas fa-coins text-yellow-500"></i>'
+            );
+            setLoading('btnSubmitOrder', false, 'ยืนยันรายการ');
+            return;
+        }
+        // เช็คอีกชั้น: ถ้าร้านปิดรับออเดอร์ระหว่างทาง
+        if (_deliverySettings && _deliverySettings.isActive === false) {
+            const modal = document.getElementById('storeClosedModal');
+            if (modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+            setLoading('btnSubmitOrder', false, 'ยืนยันรายการ');
+            return;
+        }
+    }
     if (isCustomerMode) { speak("ยอดรวม " + total.toLocaleString() + " บาท"); }
     const orderType = document.getElementById('orderType').value;
     let noteText = document.getElementById('orderNote').value.trim();
@@ -2571,6 +2688,35 @@ function handleSearchInputFilter(el) {
     // ในโหมดลูกค้าไม่ filter อะไร → พิมพ์ภาษาไทยได้
 }
 
+// ═══════════════════════════════════════════════════════════
+// 🛒 CUSTOMER SEARCH — ช่องค้นหาเฉพาะสำหรับลูกค้า
+// ═══════════════════════════════════════════════════════════
+let _customerSearchTimer = null;
+
+function onCustomerSearchInput(value) {
+    const clearBtn = document.getElementById('btnClearCustomerSearch');
+    if (clearBtn) clearBtn.classList.toggle('hidden', !value);
+
+    // ✅ Sync กับ #searchInput (ตัวหลัก) — filterMenu อ่านจากตัวนี้
+    const mainInput = document.getElementById('searchInput');
+    if (mainInput) mainInput.value = value;
+
+    // Debounce 150ms เพื่อไม่ rerender รัวๆ ระหว่างพิมพ์
+    clearTimeout(_customerSearchTimer);
+    _customerSearchTimer = setTimeout(() => {
+        filterMenu('All');
+    }, 150);
+}
+
+function clearCustomerSearch() {
+    const el = document.getElementById('customerSearchInput');
+    if (el) { el.value = ''; el.focus(); }
+    const mainInput = document.getElementById('searchInput');
+    if (mainInput) mainInput.value = '';
+    document.getElementById('btnClearCustomerSearch')?.classList.add('hidden');
+    filterMenu('All');
+}
+
 function checkMode() {
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get('mode'); const table = urlParams.get('table');
@@ -2578,8 +2724,6 @@ function checkMode() {
         isCustomerMode = true; customerTable = table || "ไม่ระบุ";
         // ✅ ใส่ class customer-mode บน body — CSS จะซ่อน .customer-hide อัตโนมัติ
         document.body.classList.add('customer-mode');
-        const adminToolbar = document.getElementById('adminToolbar'); if(adminToolbar) adminToolbar.classList.add('hidden');
-        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) { customerToolbar.classList.remove('hidden'); customerToolbar.classList.add('flex'); }
         const tableDisplay = document.getElementById('customerTableDisplay'); if(tableDisplay) tableDisplay.innerText = customerTable;
         const tableInput = document.getElementById('tableNo'); if(tableInput) { tableInput.value = customerTable; tableInput.readOnly = true; tableInput.classList.add('bg-gray-100','cursor-not-allowed'); }
         const searchInput = document.getElementById('searchInput'); if(searchInput) {
@@ -2587,11 +2731,12 @@ function checkMode() {
             searchInput.setAttribute('inputmode','text');
         }
         const searchIcon = document.getElementById('topSearchIcon'); if(searchIcon) searchIcon.className = 'fas fa-search text-blue-500';
+
+        // ✅ เช็คสถานะเดลิเวอรี่ — ถ้าร้านปิดรับ จะแสดง modal แจ้งเตือน
+        setTimeout(() => checkDeliveryStatus(), 500);
     } else {
         isCustomerMode = false;
         document.body.classList.remove('customer-mode');
-        const adminToolbar = document.getElementById('adminToolbar'); if(adminToolbar) adminToolbar.classList.remove('hidden');
-        const customerToolbar = document.getElementById('customerToolbar'); if(customerToolbar) { customerToolbar.classList.add('hidden'); customerToolbar.classList.remove('flex'); }
         const searchInput = document.getElementById('searchInput'); if(searchInput) { searchInput.placeholder = "ยิงบาร์โค้ด..."; searchInput.setAttribute('inputmode','none'); }
         const searchIcon = document.getElementById('topSearchIcon'); if(searchIcon) searchIcon.className = 'fas fa-barcode text-gray-400';
     }
@@ -2866,6 +3011,7 @@ function openExportModal() {
     document.getElementById('exportEndDate').value = today;
     document.getElementById('exportModal').classList.remove('hidden');
     loadShopInfoToForm();
+    loadDeliverySettingsToForm();
     syncAutoPrintToggle(); // sync สถานะ toggle
 }
 
@@ -3346,6 +3492,8 @@ window.onload = async () => {
     checkLoginStatus();
     initStoreStatus();
     initDateTime();
+    // ✅ โหลด delivery settings ล่วงหน้า (ให้ _deliverySettings cache พร้อมใช้)
+    getDeliverySettings();
     fetchMenu();
     renderCategoryBar();
     populateCategorySelects();

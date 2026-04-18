@@ -214,6 +214,10 @@ body { font-family: 'Kanit', sans-serif; touch-action: manipulation; }
 body.customer-mode .customer-hide,
 body.customer-mode .customer-hide-important { display: none !important; }
 
+/* แสดง element ที่ติด class .customer-only เฉพาะโหมดลูกค้า (ปกติถูกซ่อนด้วย .hidden) */
+body.customer-mode .customer-only { display: inline !important; }
+body.customer-mode .customer-only.hidden { display: inline !important; }
+
 /* Header สำหรับโหมดลูกค้า (banner สีฟ้าสวยๆ) */
 body.customer-mode .customer-banner { display: flex !important; }
 body:not(.customer-mode) .customer-banner { display: none !important; }
