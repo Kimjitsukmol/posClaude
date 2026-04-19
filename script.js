@@ -1864,9 +1864,27 @@ function filterMenu(category) {
             filtered = filtered.filter(m => m.name.toLowerCase().includes(searchText) || (m.id && String(m.id).toLowerCase().includes(searchText)));
         }
         if (category === 'All') { document.querySelectorAll('.cat-btn').forEach(btn => btn.className = "cat-btn bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 px-5 py-2 rounded-full shadow-sm text-sm font-medium transition border border-gray-200 shrink-0"); }
-    } else if (category === 'All') {
-        filtered.sort((a, b) => categories.indexOf(a.category) - categories.indexOf(b.category));
     }
+    // ✅ เรียงสินค้าให้ไม่มั่วเสมอ: ตามลำดับหมวด → ตามชื่อสินค้าในแต่ละหมวด
+    // ทำทั้งกรณี "ทั้งหมด", กดหมวดเดียว (ชื่อเรียง), ค้นหา, และโหมดลูกค้า
+    filtered.sort((a, b) => {
+        // โหมดลูกค้า: จัดกลุ่มตามหมวดย่อย drink → snack → dryfood → other
+        if (isCustomerMode) {
+            const order = { drink: 0, snack: 1, dryfood: 2, other: 3 };
+            const sa = order[classifyCustomerSubCat(a.name)] ?? 99;
+            const sb = order[classifyCustomerSubCat(b.name)] ?? 99;
+            if (sa !== sb) return sa - sb;
+        } else {
+            // โหมดผู้ขาย: เรียงตามลำดับหมวดหลักใน categories[]
+            const ia = categories.indexOf(a.category);
+            const ib = categories.indexOf(b.category);
+            const va = ia === -1 ? 999 : ia;
+            const vb = ib === -1 ? 999 : ib;
+            if (va !== vb) return va - vb;
+        }
+        // ในหมวดเดียวกัน เรียงตามชื่อสินค้า (ภาษาไทย)
+        return String(a.name || '').localeCompare(String(b.name || ''), 'th');
+    });
     const grid = document.getElementById('menuGrid'); const noResults = document.getElementById('noResults');
     if (filtered.length === 0) { grid.classList.add('hidden'); noResults.classList.remove('hidden'); }
     else {
@@ -2902,7 +2920,8 @@ function renderCustomerSubCategoryBar() {
         { id: 'all',     label: 'ทั้งหมด',           emoji: '🛵' },
         { id: 'drink',   label: 'เครื่องดื่ม',       emoji: '🥤' },
         { id: 'snack',   label: 'ขนม',              emoji: '🍪' },
-        { id: 'dryfood', label: 'อาหารแห้ง/เครื่องปรุง', emoji: '🧂' }
+        { id: 'dryfood', label: 'อาหารแห้ง/เครื่องปรุง', emoji: '🧂' },
+        { id: 'other',   label: 'อื่นๆ',            emoji: '🛍️' }
     ];
     bar.innerHTML = cats.map(c => {
         const active = c.id === _customerSubCategory;
