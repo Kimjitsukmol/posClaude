@@ -386,8 +386,14 @@ async function buildReceiptBytes(bill) {
 
     // รายการสินค้า
     items.forEach(item => {
-        const amt = (parseFloat(item.price||0) * parseInt(item.qty||1)).toLocaleString('th-TH',{minimumFractionDigits:2});
-        rows.push({ type:'cols3', name: String(item.name||''), qty: String(item.qty||1), amt, size: FONT_SZ - 2 });
+        const qty = parseInt(item.qty || 1);
+        const unitPrice = parseFloat(item.price || 0);
+        const amt = (unitPrice * qty).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+        // บรรทัดบน: ชื่อสินค้า + จำนวน + ยอดรวม
+        rows.push({ type:'cols3', name: String(item.name || ''), qty: String(qty), amt, size: FONT_SZ - 2 });
+        // ✅ บรรทัดล่าง: x จำนวน @ ราคาต่อหน่วย (ตัวเล็กเอียง สีเทา)
+        const unitStr = `  ${qty} x ${unitPrice.toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿/หน่วย`;
+        rows.push({ text: unitStr, size: FONT_SZ - 6, align: 'left', color: '#555' });
     });
 
     DIV();
@@ -401,10 +407,9 @@ async function buildReceiptBytes(bill) {
     // ── โหลด QR images (ถ้ามี) ──
     // QR 1: รูปจาก Supabase Storage (bankQR ที่ตั้งค่าไว้)
     // QR 2: ลิงก์สั่งซื้อออนไลน์ สร้างจาก QR API
-    // ⭐️ ต้องใหญ่พอที่กล้องมือถือสแกนได้บนกระดาษ thermal 58mm
-    // PAPER_W = 384 dots, QR_SIZE = 320 → ~83% ของกระดาษ = ~48mm บนกระดาษจริง (สแกนง่าย)
+    // PAPER_W = 384 dots, QR_SIZE = 256 → ~67% ของกระดาษ = ~39mm บนกระดาษจริง
     // ⭐️ ขอจาก API ขนาด "เท่ากับ" QR_SIZE เพื่อไม่ต้อง resize (ป้องกัน blur)
-    const QR_SIZE = 320;
+    const QR_SIZE = 256;
     const QR_GAP  = 12;
 
     // ฟังก์ชันโหลดรูปเป็น HTMLImageElement
@@ -1841,6 +1846,10 @@ function filterMenu(category) {
     // ✅ โหมดลูกค้า: กรองเฉพาะสินค้าหมวด "สินค้าเดลิเวอรี่" เสมอ (override category อื่น)
     if (isCustomerMode) {
         filtered = filtered.filter(m => m.category === 'สินค้าเดลิเวอรี่');
+        // ✅ กรองหมวดย่อย (drink/snack/dryfood) ถ้าเลือกไว้
+        if (_customerSubCategory && _customerSubCategory !== 'all') {
+            filtered = filtered.filter(m => classifyCustomerSubCat(m.name) === _customerSubCategory);
+        }
     } else if (category !== 'All') {
         filtered = filtered.filter(m => m.category === category);
     } else {
@@ -2130,7 +2139,8 @@ async function submitOrder() {
 async function updateKitchenBadge() {
     try {
         const { data } = await _supa.from('orders').select('order_id, status, table_no, created_at').neq('status', 'Paid');
-        const waitingCount = (data || []).filter(o => o.status !== 'Served' && o.status !== 'Paid').length;
+        const waitingOrders = (data || []).filter(o => o.status !== 'Served' && o.status !== 'Paid');
+        const waitingCount = waitingOrders.length;
         const badge = document.getElementById('kitchenBadge');
         if (waitingCount > 0) { badge.innerText = waitingCount; badge.classList.remove('hidden'); } else { badge.classList.add('hidden'); }
         if (!isCustomerMode) {
@@ -2139,11 +2149,38 @@ async function updateKitchenBadge() {
         }
         lastOrderCount = waitingCount;
         if (isCustomerMode) {
-            document.getElementById('queueCountDisplay').innerText = waitingCount;
+            // ✅ คำนวณ "ออเดอร์ก่อนหน้าของฉัน" — ดูว่ามีใครสั่งก่อนเราบ้างที่ยังไม่เสร็จ
             const cName = localStorage.getItem('customerName') || 'ลูกค้า'; const cPhone = localStorage.getItem('customerPhone') || '-';
             const savedHouse = localStorage.getItem('customerAddrHouse') || ''; const savedSoi = localStorage.getItem('customerAddrSoi') || '';
             const addressStr = `[ส่งที่: ${savedHouse} ${savedSoi ? 'ซ.' + savedSoi : ''}]`;
             const myIdentity = `${cName} (${cPhone}) ${addressStr}`;
+
+            // หาออเดอร์ที่ active ของลูกค้าคนนี้ (ตัวล่าสุด)
+            const myActiveOrders = waitingOrders.filter(o => o.table_no === myIdentity);
+            const queueBadge = document.getElementById('queueCountDisplay');
+
+            if (myActiveOrders.length > 0) {
+                // มีออเดอร์ของตัวเองที่ยัง active → นับจำนวนคนที่สั่งก่อนเรา
+                const myEarliestOrder = myActiveOrders.reduce((a, b) => a.created_at < b.created_at ? a : b);
+                const myTime = new Date(myEarliestOrder.created_at).getTime();
+                const aheadCount = waitingOrders.filter(o =>
+                    o.table_no !== myIdentity &&  // ไม่นับของตัวเอง
+                    new Date(o.created_at).getTime() < myTime  // ที่สั่งก่อนฉัน
+                ).length;
+                if (queueBadge) {
+                    queueBadge.innerText = aheadCount;
+                    queueBadge.title = aheadCount === 0
+                        ? 'ถึงคิวของคุณแล้ว!'
+                        : `มี ${aheadCount} ออเดอร์ก่อนหน้าคุณ`;
+                }
+            } else {
+                // ยังไม่มีออเดอร์ → แสดงจำนวนคิวทั้งหมด (ถ้ามาสั่งตอนนี้จะอยู่หลังทุกคน)
+                if (queueBadge) {
+                    queueBadge.innerText = waitingCount;
+                    queueBadge.title = `ตอนนี้มีออเดอร์รออยู่ ${waitingCount} รายการ`;
+                }
+            }
+
             const { data: myOrders } = await _supa.from('orders').select('*').eq('table_no', myIdentity);
             (myOrders || []).forEach(order => {
                 if (order.status === 'Served' && !notifiedOrders.has(order.order_id)) {
@@ -2657,6 +2694,140 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════
+// 🕐 QUEUE STATUS — แสดงว่ารออีกกี่คิวถึงถึงลูกค้า
+// ═══════════════════════════════════════════════════════════
+async function openQueueStatus() {
+    const modal = document.getElementById('queueStatusModal');
+    const content = document.getElementById('queueStatusContent');
+    if (!modal || !content) return;
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    content.innerHTML = '<div class="text-center text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl"></i></div>';
+
+    try {
+        const { data } = await _supa.from('orders').select('order_id, status, table_no, created_at').neq('status', 'Paid');
+        const waitingOrders = (data || []).filter(o => o.status !== 'Served' && o.status !== 'Paid')
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+        const cName = localStorage.getItem('customerName') || 'ลูกค้า';
+        const cPhone = localStorage.getItem('customerPhone') || '-';
+        const savedHouse = localStorage.getItem('customerAddrHouse') || '';
+        const savedSoi = localStorage.getItem('customerAddrSoi') || '';
+        const addressStr = `[ส่งที่: ${savedHouse} ${savedSoi ? 'ซ.' + savedSoi : ''}]`;
+        const myIdentity = `${cName} (${cPhone}) ${addressStr}`;
+
+        const myActiveOrders = waitingOrders.filter(o => o.table_no === myIdentity);
+        const totalWaiting = waitingOrders.length;
+
+        let html = '';
+
+        if (myActiveOrders.length === 0) {
+            // ── ยังไม่มีออเดอร์ของตัวเอง ──
+            html = `
+                <div class="text-center mb-4">
+                    <div class="text-6xl mb-3">🛒</div>
+                    <div class="text-xl font-extrabold text-gray-800 mb-1">คุณยังไม่มีออเดอร์</div>
+                    <p class="text-sm text-gray-500">สั่งเลยเพื่อให้เราเตรียมของไปส่ง</p>
+                </div>
+                <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                    <div class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">คิวรวมในระบบตอนนี้</div>
+                    <div class="text-4xl font-extrabold text-blue-600">${totalWaiting}</div>
+                    <div class="text-xs text-gray-500 mt-1">รายการที่กำลังทำอยู่</div>
+                </div>
+                ${totalWaiting > 0 ? `
+                    <p class="text-[11px] text-gray-500 text-center mt-3">
+                        <i class="fas fa-info-circle"></i>
+                        ถ้าสั่งตอนนี้คุณจะอยู่คิวที่ ${totalWaiting + 1}
+                    </p>
+                ` : `
+                    <p class="text-[11px] text-green-600 text-center mt-3 font-bold">
+                        <i class="fas fa-bolt"></i> ร้านว่าง สั่งได้เลย!
+                    </p>
+                `}
+            `;
+        } else {
+            // ── มีออเดอร์ของตัวเอง — คำนวณคิวก่อนหน้า ──
+            const myEarliestOrder = myActiveOrders[0]; // เรียงจากเก่าไปใหม่แล้ว → ตัวแรกคือเก่าสุด
+            const myTime = new Date(myEarliestOrder.created_at).getTime();
+            const aheadOrders = waitingOrders.filter(o =>
+                o.table_no !== myIdentity && new Date(o.created_at).getTime() < myTime
+            );
+            const aheadCount = aheadOrders.length;
+            const myPosition = aheadCount + 1;
+
+            // คำนวณเวลาที่คาดว่าจะถึงคิว (ประมาณ 3 นาที/คิว)
+            const estimatedMinutes = aheadCount * 3;
+
+            // สถานะของออเดอร์ตัวเอง
+            let statusBadge = '';
+            if (myEarliestOrder.status === 'Pending') {
+                statusBadge = '<span class="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full border border-yellow-300">⏳ รอยืนยัน</span>';
+            } else if (myEarliestOrder.status === 'Accepted' || myEarliestOrder.status === 'Preparing') {
+                statusBadge = '<span class="bg-blue-100 text-blue-700 text-xs font-bold px-3 py-1 rounded-full border border-blue-300">🍳 กำลังเตรียม</span>';
+            } else if (myEarliestOrder.status === 'Ready') {
+                statusBadge = '<span class="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full border border-green-300">🛵 กำลังจัดส่ง</span>';
+            } else {
+                statusBadge = `<span class="bg-gray-100 text-gray-700 text-xs font-bold px-3 py-1 rounded-full border border-gray-300">${myEarliestOrder.status}</span>`;
+            }
+
+            if (aheadCount === 0) {
+                // ── ถึงคิวแล้ว! ──
+                html = `
+                    <div class="text-center mb-4">
+                        <div class="text-6xl mb-3 animate-bounce">🎉</div>
+                        <div class="text-xl font-extrabold text-green-600 mb-1">ถึงคิวของคุณแล้ว!</div>
+                        <p class="text-sm text-gray-500">ร้านกำลังเตรียมออเดอร์ของคุณ</p>
+                    </div>
+                    <div class="bg-green-50 border-2 border-green-300 rounded-xl p-4 text-center">
+                        <div class="flex items-center justify-center gap-2 mb-2">${statusBadge}</div>
+                        <div class="text-xs text-gray-500 mt-2">ออเดอร์ของคุณ: ${myEarliestOrder.order_id}</div>
+                    </div>
+                `;
+            } else {
+                // ── รออยู่ — แสดงจำนวนก่อนหน้า + ตำแหน่ง ──
+                html = `
+                    <div class="text-center mb-4">
+                        <div class="text-xs text-gray-500 uppercase tracking-wider font-bold mb-1">ออเดอร์ก่อนหน้าคุณ</div>
+                        <div class="text-7xl font-extrabold text-orange-500 leading-none drop-shadow">${aheadCount}</div>
+                        <div class="text-xs text-gray-500 mt-1">รายการ</div>
+                    </div>
+
+                    <!-- Progress bar -->
+                    <div class="bg-gray-100 rounded-full h-3 overflow-hidden mb-2">
+                        <div class="bg-gradient-to-r from-orange-400 to-red-500 h-full rounded-full transition-all duration-500"
+                             style="width: ${Math.min((1 / myPosition) * 100, 100)}%"></div>
+                    </div>
+                    <div class="flex justify-between text-[10px] text-gray-500 mb-4">
+                        <span>🛒 คุณอยู่คิวที่ ${myPosition}</span>
+                        <span>⏱️ ~${estimatedMinutes} นาที</span>
+                    </div>
+
+                    <!-- สถานะออเดอร์ -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+                        <div class="text-[11px] text-blue-600 font-bold uppercase tracking-wider mb-1.5">สถานะออเดอร์ของคุณ</div>
+                        <div>${statusBadge}</div>
+                        <div class="text-[10px] text-gray-500 mt-2">${myEarliestOrder.order_id}</div>
+                    </div>
+
+                    <p class="text-[11px] text-gray-400 text-center mt-3">
+                        <i class="fas fa-sync-alt"></i> อัปเดตล่าสุด: ${new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit'})}
+                    </p>
+                `;
+            }
+        }
+
+        content.innerHTML = html;
+    } catch(e) {
+        console.error('openQueueStatus err:', e);
+        content.innerHTML = `<div class="text-center text-red-500 p-4">
+            <i class="fas fa-exclamation-triangle text-3xl mb-2"></i>
+            <p class="text-sm">โหลดข้อมูลไม่ได้: ${e.message || e}</p>
+        </div>`;
+    }
+}
+
 function openMyRecentOrder() {
     const modal = document.getElementById('myOrderModal'); const content = document.getElementById('myOrderContent');
     if (myLastOrders && myLastOrders.items && myLastOrders.items.length > 0) {
@@ -2692,20 +2863,72 @@ function handleSearchInputFilter(el) {
 // 🛒 CUSTOMER SEARCH — ช่องค้นหาเฉพาะสำหรับลูกค้า
 // ═══════════════════════════════════════════════════════════
 let _customerSearchTimer = null;
+let _customerSubCategory = 'all'; // 'all' | 'drink' | 'snack' | 'dryfood'
+
+// ── Keyword-based sub-category classifier ──
+// ดูชื่อสินค้าแล้วเดาหมวดย่อย — ใช้กับสินค้าในหมวด "สินค้าเดลิเวอรี่" เท่านั้น
+const SUB_CAT_KEYWORDS = {
+    drink: ['น้ำ', 'เครื่องดื่ม', 'โค้ก', 'coke', 'pepsi', 'เป๊ปซี่', 'สไปรท์', 'sprite', 'แฟนต้า', 'fanta',
+            'นม', 'milk', 'ชา', 'tea', 'กาแฟ', 'coffee', 'โอเล่', 'เอ็ม150', 'กระทิงแดง', 'redbull',
+            'เบียร์', 'beer', 'สุรา', 'ไวน์', 'wine', 'โซดา', 'soda', 'น้ำส้ม', 'น้ำผลไม้', 'juice',
+            'สปอนเซอร์', 'เก๊กฮวย', 'น้ำอัดลม', 'น้ำเปล่า', 'น้ำแร่', 'โยเกิร์ต', 'yogurt',
+            'ลิโพ', 'โออิชิ', 'เอสเพลส', 'ยาคูลท์', 'นมเปรี้ยว'],
+    snack: ['ขนม', 'คุกกี้', 'cookie', 'ช็อกโกแลต', 'chocolate', 'ช็อกโก',
+            'เลย์', 'lays', 'ปาปริก้า', 'มันฝรั่ง', 'โปเต้', 'ทาโร่', 'taro',
+            'เวเฟอร์', 'wafer', 'บิสกิต', 'ฟันดี', 'ขนมเด็ก', 'ขนมถุง',
+            'เยลลี่', 'jelly', 'ลูกอม', 'หมากฝรั่ง', 'แครกเกอร์', 'cracker',
+            'ป๊อปคอร์น', 'popcorn', 'แพนด้า', 'โอรีโอ', 'oreo', 'ฟาร์มเฮ้าส์',
+            'โดนัท', 'donut', 'พาย', 'เค้ก', 'cake', 'ไอศกรีม', 'ice cream', 'ไอติม',
+            'หมึกอบ', 'สาหร่าย', 'ถั่ว', 'ข้าวเกรียบ'],
+    dryfood: ['บะหมี่', 'มาม่า', 'noodle', 'ไวไว', 'ยำยำ', 'นิสชิน',
+              'ซีอิ๊ว', 'น้ำปลา', 'น้ำตาล', 'เกลือ', 'พริกไทย', 'ผงชูรส',
+              'ซอส', 'sauce', 'ซุป', 'soup', 'ปลากระป๋อง', 'ทูน่า', 'tuna',
+              'ข้าว', 'rice', 'เส้น', 'แป้ง', 'ผงปรุง', 'พริกแกง', 'กะปิ',
+              'เต้าเจี้ยว', 'น้ำมัน', 'oil', 'น้ำมันพืช', 'ถ้วยกระเพรา']
+};
+
+function classifyCustomerSubCat(name) {
+    const n = String(name || '').toLowerCase();
+    for (const [cat, kws] of Object.entries(SUB_CAT_KEYWORDS)) {
+        if (kws.some(k => n.includes(k.toLowerCase()))) return cat;
+    }
+    return 'other';
+}
+
+function renderCustomerSubCategoryBar() {
+    const bar = document.getElementById('customerSubCategoryBar');
+    if (!bar) return;
+    const cats = [
+        { id: 'all',     label: 'ทั้งหมด',           emoji: '🛵' },
+        { id: 'drink',   label: 'เครื่องดื่ม',       emoji: '🥤' },
+        { id: 'snack',   label: 'ขนม',              emoji: '🍪' },
+        { id: 'dryfood', label: 'อาหารแห้ง/เครื่องปรุง', emoji: '🧂' }
+    ];
+    bar.innerHTML = cats.map(c => {
+        const active = c.id === _customerSubCategory;
+        const cls = active
+            ? 'bg-white text-blue-600 shadow-md font-bold'
+            : 'bg-white/25 text-white hover:bg-white/40 font-medium';
+        return `<button onclick="filterCustomerSubCategory('${c.id}')"
+                class="${cls} px-4 py-1.5 rounded-full text-xs shrink-0 transition active:scale-95 backdrop-blur-sm border border-white/40 flex items-center gap-1.5">
+                <span>${c.emoji}</span><span>${c.label}</span>
+            </button>`;
+    }).join('');
+}
+
+function filterCustomerSubCategory(subCatId) {
+    _customerSubCategory = subCatId;
+    renderCustomerSubCategoryBar();
+    filterMenu('All');
+}
 
 function onCustomerSearchInput(value) {
     const clearBtn = document.getElementById('btnClearCustomerSearch');
     if (clearBtn) clearBtn.classList.toggle('hidden', !value);
-
-    // ✅ Sync กับ #searchInput (ตัวหลัก) — filterMenu อ่านจากตัวนี้
     const mainInput = document.getElementById('searchInput');
     if (mainInput) mainInput.value = value;
-
-    // Debounce 150ms เพื่อไม่ rerender รัวๆ ระหว่างพิมพ์
     clearTimeout(_customerSearchTimer);
-    _customerSearchTimer = setTimeout(() => {
-        filterMenu('All');
-    }, 150);
+    _customerSearchTimer = setTimeout(() => filterMenu('All'), 150);
 }
 
 function clearCustomerSearch() {
@@ -2731,6 +2954,9 @@ function checkMode() {
             searchInput.setAttribute('inputmode','text');
         }
         const searchIcon = document.getElementById('topSearchIcon'); if(searchIcon) searchIcon.className = 'fas fa-search text-blue-500';
+
+        // ✅ Render แถบหมวดย่อยสำหรับลูกค้า
+        renderCustomerSubCategoryBar();
 
         // ✅ เช็คสถานะเดลิเวอรี่ — ถ้าร้านปิดรับ จะแสดง modal แจ้งเตือน
         setTimeout(() => checkDeliveryStatus(), 500);
