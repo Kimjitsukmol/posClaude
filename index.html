@@ -569,41 +569,6 @@
                 </div>
             </div>
             
-            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                <h4 class="font-bold text-blue-700 mb-1"><i class="fas fa-cloud-download-alt"></i> สำรอง & กู้คืนข้อมูล</h4>
-                <p class="text-[10px] text-gray-500 mb-3 font-bold">เพื่อป้องกันข้อมูลหาย หรือต้องการย้ายเครื่อง</p>
-                <div class="flex gap-2">
-                    <button onclick="backupData()" id="btnBackup" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs shadow transition active:scale-95"><i class="fas fa-save mr-1"></i> <span class="btn-text">สร้างไฟล์ Backup</span></button>
-                    
-                    <input type="file" id="restoreInput" accept=".json" class="hidden" onchange="restoreData(event)">
-                    <button onclick="document.getElementById('restoreInput').click()" id="btnRestore" class="flex-1 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 font-bold py-2 rounded-lg text-xs shadow-sm transition active:scale-95"><i class="fas fa-upload mr-1"></i> <span class="btn-text">กู้คืน (ย้ายเครื่อง)</span></button>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-                <div class="bg-white p-3 rounded-xl border border-green-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                        <h4 class="font-bold text-green-700 mb-1 text-xs"><i class="fas fa-box-open"></i> ฐานข้อมูลสินค้า</h4>
-                        <p class="text-[9px] text-gray-500 mb-2 font-bold leading-tight">เพิ่ม/อัปเดตสินค้าจำนวนมากจากไฟล์ CSV</p>
-                    </div>
-                    <input type="file" id="importCSVInput" accept=".csv" class="hidden" onchange="handleImportCSV(event)">
-                    <button onclick="document.getElementById('importCSVInput').click()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded-lg text-[10px] shadow-sm transition active:scale-95 mt-auto">
-                        <i class="fas fa-file-import mr-1"></i> นำเข้าสินค้า
-                    </button>
-                </div>
-
-                <div class="bg-white p-3 rounded-xl border border-indigo-200 shadow-sm flex flex-col justify-between">
-                    <div>
-                        <h4 class="font-bold text-indigo-700 mb-1 text-xs"><i class="fas fa-history"></i> ประวัติการขาย</h4>
-                        <p class="text-[9px] text-gray-500 mb-2 font-bold leading-tight">นำเข้าบิลเก่า เพื่อสรุปยอดขายย้อนหลัง</p>
-                    </div>
-                    <input type="file" id="importHistoryInput" accept=".csv" class="hidden" onchange="importHistoryCSV(event)">
-                    <button onclick="document.getElementById('importHistoryInput').click()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg text-[10px] shadow-sm transition active:scale-95 mt-auto">
-                        <i class="fas fa-file-import mr-1"></i> นำเข้าบิลเก่า
-                    </button>
-                </div>
-            </div>
-
             <!-- ✅ ตั้งค่าร้าน -->
             <div class="bg-white p-4 rounded-xl border border-blue-200 shadow-sm space-y-3">
                 <h4 class="font-bold text-gray-800 flex items-center gap-2">
