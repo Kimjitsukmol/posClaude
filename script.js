@@ -3303,12 +3303,25 @@ async function executeExportPDF() {
     const type = document.getElementById('exportType').value; const start = document.getElementById('exportStartDate').value; const end = document.getElementById('exportEndDate').value;
     if (!start || !end) { showToast('กรุณาเลือกวันที่ให้ครบ','warning'); return; }
     setLoading('btnDoExport', true, 'สร้างรายงาน...');
+
+    // ✅ เปิดหน้าต่างก่อน await (เพื่อไม่ให้หลุด user-gesture บน Chrome Android)
+    //    ถ้า popup ถูกบล็อก จะได้ null แล้วเรา fallback เป็นดาวน์โหลดไฟล์ HTML แทน
+    let printWindow = null;
+    try { printWindow = window.open('', '_blank'); } catch(e) { printWindow = null; }
+    if (printWindow) {
+        try {
+            printWindow.document.open();
+            printWindow.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>กำลังสร้างรายงาน...</title></head><body style="font-family:sans-serif;padding:40px;text-align:center;color:#555;"><h2>⏳ กำลังสร้างรายงาน กรุณารอสักครู่...</h2></body></html>');
+            printWindow.document.close();
+        } catch(_) { /* ignore */ }
+    }
+
     try {
         // ✅ ใช้ pagination เผื่อช่วงที่เลือกมีบิลเกิน 1000
         const filtered = await fetchBillsInRange(start+'T00:00:00', end+'T23:59:59.999');
         filtered.sort((a,b) => new Date(a.date) - new Date(b.date));
         let title = type === 'MonthlySales' ? 'รายงานสรุปยอดขายรายเดือน' : type === 'DailySales' ? 'รายงานสรุปยอดขายรายวัน' : 'รายงานรายละเอียดบิลขาย';
-        let htmlContent = `<html><head><title>${title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');body{font-family:'Sarabun',sans-serif;padding:40px;color:#333;}.header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px;}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px;}th,td{border:1px solid #cbd5e1;padding:10px;text-align:left;}th{background:#f8fafc;font-weight:bold;text-align:center;}.text-right{text-align:right;}.text-center{text-align:center;}.total-row{font-weight:bold;background:#f1f5f9;}</style></head><body><div class="header"><h1>${title}</h1><p>ข้อมูลตั้งแต่ ${start} ถึง ${end}</p></div>`;
+        let htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');body{font-family:'Sarabun',sans-serif;padding:40px;color:#333;}.header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px;}table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px;}th,td{border:1px solid #cbd5e1;padding:10px;text-align:left;}th{background:#f8fafc;font-weight:bold;text-align:center;}.text-right{text-align:right;}.text-center{text-align:center;}.total-row{font-weight:bold;background:#f1f5f9;}@media print{.no-print{display:none;}}.no-print{text-align:center;margin:20px 0;}.no-print button{background:#dc2626;color:#fff;border:0;padding:12px 28px;font-size:16px;font-weight:bold;border-radius:8px;cursor:pointer;font-family:inherit;}</style></head><body><div class="no-print"><button onclick="window.print()">🖨️ พิมพ์ / บันทึกเป็น PDF</button></div><div class="header"><h1>${title}</h1><p>ข้อมูลตั้งแต่ ${start} ถึง ${end}</p></div>`;
         if (type === 'DailySales' || type === 'MonthlySales') {
             let totalAmount = 0; filtered.forEach(b => totalAmount += parseFloat(b.total||0));
             htmlContent += `<p style="font-size:20px;font-weight:bold;text-align:center;">ยอดรวม: ${totalAmount.toLocaleString('th-TH',{minimumFractionDigits:2})} บาท (${filtered.length} บิล)</p>`;
@@ -3324,9 +3337,53 @@ async function executeExportPDF() {
             htmlContent += `<tr class="total-row"><td colspan="3" class="text-right">รวมทั้งหมด</td><td class="text-right">${totalAmount.toLocaleString('th-TH',{minimumFractionDigits:2})}</td></tr></table>`;
         }
         htmlContent += `</body></html>`;
-        const printWindow = window.open('','_blank'); printWindow.document.write(htmlContent); printWindow.document.close();
-        showToast('สร้างรายงานเรียบร้อย','success'); closeModal('exportModal');
-    } catch(err) { showCustomAlert('ผิดพลาด','สร้างรายงานไม่สำเร็จ: '+err); }
+
+        // ✅ ถ้ามีหน้าต่างที่เปิดไว้อยู่แล้ว → เขียน HTML ลงไป
+        // ถ้าไม่มี (popup ถูกบล็อก) → ใช้ Blob URL เปิดในแท็บใหม่ หรือ fallback เป็นดาวน์โหลดไฟล์
+        let opened = false;
+        if (printWindow && !printWindow.closed) {
+            try {
+                printWindow.document.open();
+                printWindow.document.write(htmlContent);
+                printWindow.document.close();
+                opened = true;
+            } catch(e) {
+                console.warn('เขียนลง printWindow ไม่สำเร็จ:', e);
+                try { printWindow.close(); } catch(_){}
+            }
+        }
+
+        if (!opened) {
+            // Fallback 1: เปิดด้วย Blob URL
+            try {
+                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                const blobUrl = URL.createObjectURL(blob);
+                const w2 = window.open(blobUrl, '_blank');
+                if (w2) {
+                    opened = true;
+                    setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch(_){} }, 60000);
+                } else {
+                    // Fallback 2: ดาวน์โหลดไฟล์ HTML ให้ผู้ใช้กดเปิดเอง
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = `${title.replace(/\s+/g,'_')}_${start}_${end}.html`;
+                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch(_){} }, 60000);
+                    showCustomAlert('Popup ถูกบล็อก', 'เบราว์เซอร์บล็อก popup — ระบบจึงดาวน์โหลดไฟล์รายงานให้แทน โปรดเปิดไฟล์ HTML ที่ดาวน์โหลด แล้วสั่งพิมพ์เป็น PDF จากเบราว์เซอร์');
+                    opened = true;
+                }
+            } catch(e) {
+                throw new Error('ไม่สามารถสร้างไฟล์รายงานได้: ' + (e.message || e));
+            }
+        }
+
+        if (opened) { showToast('สร้างรายงานเรียบร้อย','success'); closeModal('exportModal'); }
+    } catch(err) {
+        // ถ้า error ให้ปิดหน้าต่าง placeholder ที่เปิดค้างไว้ด้วย
+        if (printWindow && !printWindow.closed) { try { printWindow.close(); } catch(_){} }
+        console.error('executeExportPDF error:', err);
+        showCustomAlert('ผิดพลาด','สร้างรายงานไม่สำเร็จ: ' + (err && err.message ? err.message : err));
+    }
     finally { setLoading('btnDoExport', false, 'พิมพ์รายงาน PDF'); }
 }
 
