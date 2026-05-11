@@ -2573,7 +2573,7 @@ async function fetchBillsInRange(startISO, endISO) {
 async function openHistoryModal() {
     document.getElementById('historyModal').classList.remove('hidden');
     const list = document.getElementById('historyList');
-    list.innerHTML = '<tr><td colspan="3" class="text-center p-10 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl mb-2"></i><br>กำลังโหลดรายการ...</td></tr>';
+    list.innerHTML = '<tr><td colspan="4" class="text-center p-10 text-gray-400"><i class="fas fa-circle-notch fa-spin text-2xl mb-2"></i><br>กำลังโหลดรายการ...</td></tr>';
     try {
         // ✅ ให้ Supabase เรียงและจำกัดจำนวนมาเลย — จะได้บิลล่าสุด 200 รายการจริง
         const { data, error } = await _supa.from('bills')
@@ -2587,13 +2587,13 @@ async function openHistoryModal() {
         if (badgeCount) badgeCount.innerText = `ล่าสุด ${historyBills.length} บิล`;
     } catch(e) {
         console.error('openHistoryModal error:', e);
-        list.innerHTML = '<tr><td colspan="3" class="text-center p-4 text-red-400">โหลดข้อมูลไม่ได้</td></tr>';
+        list.innerHTML = '<tr><td colspan="4" class="text-center p-4 text-red-400">โหลดข้อมูลไม่ได้</td></tr>';
     }
 }
 
 function renderHistoryList() {
     const list = document.getElementById('historyList');
-    if (!historyBills || historyBills.length === 0) { list.innerHTML = '<tr><td colspan="3" class="text-center p-10 text-gray-300">ไม่พบประวัติการขาย</td></tr>'; return; }
+    if (!historyBills || historyBills.length === 0) { list.innerHTML = '<tr><td colspan="4" class="text-center p-10 text-gray-300">ไม่พบประวัติการขาย</td></tr>'; return; }
     list.innerHTML = historyBills.map((b, index) => {
         let dateStr = "-"; let timeStr = "-";
         try { const d = new Date(b.date); dateStr = d.toLocaleDateString('th-TH',{day:'2-digit',month:'2-digit',year:'2-digit'}); timeStr = d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}); } catch(e) {}
@@ -2601,8 +2601,175 @@ function renderHistoryList() {
             <td class="p-3 font-mono align-top pt-3 group-hover:text-blue-600"><div class="text-[10px] text-gray-400 font-bold leading-none mb-1">${dateStr}</div><div class="text-sm font-bold text-gray-700">${timeStr}</div></td>
             <td class="p-3 text-gray-700 align-top pt-3"><span class="line-clamp-1 leading-relaxed font-medium group-hover:text-blue-800">${b.itemSummary}</span><span class="text-[10px] text-gray-400 block mt-0.5">ID: ${b.billId}</span></td>
             <td class="p-3 text-right font-bold text-gray-800 align-top pt-3 whitespace-nowrap text-base group-hover:text-blue-600">${parseFloat(b.total).toLocaleString()}</td>
+            <td class="p-3 pr-4 text-center align-top pt-3">
+                <button onclick="event.stopPropagation(); deleteBillHistory(${index})"
+                        title="ลบประวัติบิลนี้"
+                        class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-500 text-red-500 hover:text-white transition active:scale-90 flex items-center justify-center shadow-sm border border-red-100 hover:border-red-500">
+                    <i class="fas fa-trash-alt text-xs"></i>
+                </button>
+            </td>
         </tr>`;
     }).join('');
+}
+
+// ============================================================
+// 🗑️ DELETE BILL FROM HISTORY (Supabase + UI)
+// ============================================================
+async function deleteBillHistory(index) {
+    const bill = historyBills[index];
+    if (!bill) { showToast('ไม่พบบิลที่ต้องการลบ', 'warning'); return; }
+
+    // สรุปบิลให้ดูก่อนยืนยัน
+    const totalStr = parseFloat(bill.total||0).toLocaleString('th-TH',{minimumFractionDigits:2});
+    let dateStr = '-';
+    try { dateStr = new Date(bill.date).toLocaleString('th-TH',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch(e) {}
+    const itemCount = (bill.items || []).length;
+    const customerName = (bill.table || 'N/A').split('(')[0].trim() || 'ลูกค้าทั่วไป';
+
+    // ใช้ custom confirm modal สวยๆ แทน confirm() ของเบราว์เซอร์
+    const confirmed = await showDeleteBillConfirm({
+        billId: bill.billId,
+        dateStr,
+        totalStr,
+        itemCount,
+        customerName,
+        itemSummary: bill.itemSummary || ''
+    });
+    if (!confirmed) return;
+
+    // หา row ที่กำลังลบเพื่อแสดง loading state
+    const row = document.querySelector(`#historyList tr:nth-child(${index + 1})`);
+    if (row) row.style.opacity = '0.4';
+
+    try {
+        // ลบจาก Supabase ผ่าน dbDelete เดิม (table=bills, key=bill_id)
+        await dbDelete('history', bill.billId);
+
+        // ลบออกจาก array ใน memory
+        historyBills.splice(index, 1);
+
+        // re-render ตารางใหม่ + อัปเดต badge จำนวน
+        renderHistoryList();
+        const badgeCount = document.querySelector('#historyModal h3 span');
+        if (badgeCount) badgeCount.innerText = `ล่าสุด ${historyBills.length} บิล`;
+
+        showToast(`ลบบิล ${bill.billId} แล้ว ✅`, 'success');
+    } catch (e) {
+        console.error('deleteBillHistory error:', e);
+        if (row) row.style.opacity = '1';
+        showToast('ลบไม่สำเร็จ: ' + (e.message || e), 'warning');
+    }
+}
+
+// ============================================================
+// 🎨 CUSTOM DELETE CONFIRM MODAL (Promise-based)
+// ============================================================
+function showDeleteBillConfirm({ billId, dateStr, totalStr, itemCount, customerName, itemSummary }) {
+    return new Promise((resolve) => {
+        // ลบ modal เก่าถ้ามีค้าง
+        const existing = document.getElementById('deleteBillConfirmModal');
+        if (existing) existing.remove();
+
+        // ตัด summary ให้สั้นพอ
+        const shortSummary = (itemSummary || '').length > 60
+            ? itemSummary.slice(0, 60) + '…'
+            : (itemSummary || '-');
+
+        const modal = document.createElement('div');
+        modal.id = 'deleteBillConfirmModal';
+        modal.className = 'fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in';
+        modal.innerHTML = `
+            <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-pop relative">
+                <!-- พื้นหลังลายเตือน -->
+                <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-5 pointer-events-none"></div>
+
+                <!-- Header สีแดง gradient + ไอคอนสั่นเตือน -->
+                <div class="bg-gradient-to-br from-red-500 via-red-600 to-rose-700 p-6 text-white text-center relative overflow-hidden">
+                    <div class="absolute -right-8 -top-8 w-32 h-32 bg-white/10 rounded-full"></div>
+                    <div class="absolute -left-8 -bottom-8 w-24 h-24 bg-white/10 rounded-full"></div>
+                    <div class="relative z-10">
+                        <div class="bg-white/25 backdrop-blur-sm rounded-full w-20 h-20 mx-auto flex items-center justify-center shadow-lg border-2 border-white/40 mb-3 animate-heartbeat">
+                            <i class="fas fa-trash-alt text-4xl"></i>
+                        </div>
+                        <h2 class="text-2xl font-extrabold drop-shadow-md tracking-tight">ยืนยันการลบบิล?</h2>
+                        <p class="text-xs font-medium mt-1 opacity-90">การลบนี้ไม่สามารถย้อนกลับได้</p>
+                    </div>
+                </div>
+
+                <!-- รายละเอียดบิล -->
+                <div class="p-5 space-y-3 relative">
+                    <div class="bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-4 border border-gray-200 shadow-inner">
+                        <div class="flex items-center justify-between mb-2 pb-2 border-b border-dashed border-gray-300">
+                            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">เลขที่บิล</span>
+                            <span class="font-mono font-bold text-gray-800 text-sm">${billId}</span>
+                        </div>
+                        <div class="space-y-1.5 text-sm">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-500"><i class="fas fa-user text-gray-400 mr-1.5 text-xs"></i>ลูกค้า</span>
+                                <span class="font-semibold text-gray-700 truncate ml-2 max-w-[60%] text-right">${customerName}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-500"><i class="fas fa-clock text-gray-400 mr-1.5 text-xs"></i>วันที่</span>
+                                <span class="font-semibold text-gray-700">${dateStr}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-500"><i class="fas fa-box text-gray-400 mr-1.5 text-xs"></i>จำนวนรายการ</span>
+                                <span class="font-semibold text-gray-700">${itemCount} รายการ</span>
+                            </div>
+                        </div>
+                        <div class="mt-3 pt-3 border-t border-dashed border-gray-300 flex justify-between items-center">
+                            <span class="text-xs font-bold text-gray-500 uppercase">ยอดรวม</span>
+                            <span class="font-extrabold text-2xl text-red-600 tracking-tight">฿${totalStr}</span>
+                        </div>
+                    </div>
+
+                    <!-- แจ้งเตือน -->
+                    <div class="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2.5">
+                        <div class="text-red-500 mt-0.5 shrink-0">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </div>
+                        <p class="text-xs text-red-700 leading-relaxed">
+                            ข้อมูลบิลนี้จะถูก<strong>ลบจากฐานข้อมูล Supabase อย่างถาวร</strong>
+                            และ<strong>ไม่สามารถกู้คืนได้</strong> โปรดตรวจสอบให้แน่ใจก่อนยืนยัน
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Footer ปุ่ม -->
+                <div class="p-4 bg-gray-50 border-t border-gray-200 flex gap-3">
+                    <button id="deleteBillCancelBtn"
+                            class="flex-1 bg-white hover:bg-gray-100 text-gray-700 font-bold py-3 rounded-xl border-2 border-gray-200 transition active:scale-95 shadow-sm">
+                        <i class="fas fa-times mr-1.5"></i> ยกเลิก
+                    </button>
+                    <button id="deleteBillConfirmBtn"
+                            class="flex-1 bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-red-500/30 transition active:scale-95 border border-red-700">
+                        <i class="fas fa-trash-alt mr-1.5"></i> ยืนยันลบ
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        // จัดการการปิด modal
+        const cleanup = (result) => {
+            modal.classList.remove('animate-fade-in');
+            modal.style.transition = 'opacity 0.18s ease-out';
+            modal.style.opacity = '0';
+            setTimeout(() => { modal.remove(); resolve(result); }, 180);
+        };
+
+        modal.querySelector('#deleteBillCancelBtn').onclick = () => cleanup(false);
+        modal.querySelector('#deleteBillConfirmBtn').onclick = () => cleanup(true);
+
+        // คลิกพื้นหลังเพื่อยกเลิก
+        modal.addEventListener('click', (e) => { if (e.target === modal) cleanup(false); });
+
+        // กด Esc เพื่อยกเลิก
+        const escHandler = (e) => {
+            if (e.key === 'Escape') { document.removeEventListener('keydown', escHandler); cleanup(false); }
+        };
+        document.addEventListener('keydown', escHandler);
+    });
 }
 
 function openBillDetail(index) {
@@ -3425,6 +3592,12 @@ let mySalesChart=null, mySales7DaysChart=null, myTop5PieChart=null;
 
 // เก็บ chart instances ไว้เพื่อ destroy ก่อนสร้างใหม่ (ป้องกัน memory leak)
 let myTop3PieChart = null;
+let myMonthProgressChart = null;
+
+// State สำหรับปฏิทินยอดขาย
+let _dashDailyMap = {};       // { 'YYYY-MM-DD': total }
+let _dashCalendarYear  = new Date().getFullYear();
+let _dashCalendarMonth = new Date().getMonth();
 
 async function openDashboardModal() {
     closeModal('exportModal');
@@ -3506,6 +3679,42 @@ async function openDashboardModal() {
         setEl('lastMonthNameLabel', `${thaiMonthNames[lastMonthStart.getMonth()]} ${lastMonthStart.getFullYear()+543}`);
         setEl('thisMonthNameLabel', `${thaiMonthNames[now.getMonth()]} ${now.getFullYear()+543}`);
 
+        // ── (1.1) NEW: เฉลี่ยต่อบิลวันนี้ ──
+        const avgPerBill = todayBillsCount > 0 ? Math.round(todaySales / todayBillsCount) : 0;
+        setEl('dashAvgPerBill', avgPerBill.toLocaleString());
+
+        // ── (1.2) NEW: Growth % เทียบเมื่อวาน + เปลี่ยนทิศลูกศร ──
+        const growthEl = document.getElementById('dashGrowth');
+        const arrowEl = document.getElementById('dashTodayArrow');
+        if (growthEl) {
+            if (yesterdaySales === 0) {
+                growthEl.innerHTML = `<span class="text-gray-400">ยังไม่มียอดเมื่อวาน</span>`;
+                if (arrowEl) arrowEl.className = 'fas fa-minus text-gray-400 text-sm';
+            } else {
+                const diffPct = ((todaySales - yesterdaySales) / yesterdaySales) * 100;
+                const up = diffPct >= 0;
+                const arrow = up ? '▲' : '▼';
+                const color = up ? 'text-green-500' : 'text-red-500';
+                growthEl.innerHTML = `<span class="${color} font-extrabold">${arrow} ${Math.abs(diffPct).toFixed(1)}%</span> <span class="text-gray-400">เทียบเมื่อวาน</span>`;
+                if (arrowEl) arrowEl.className = `fas ${up ? 'fa-arrow-up text-green-500' : 'fa-arrow-down text-red-500'} text-sm`;
+            }
+        }
+
+        // ── (1.3) NEW: เก็บยอดขายรายวันของเดือนนี้ไว้ใช้กับ "ปฏิทินยอดขาย" ──
+        _dashDailyMap = {}; // key: "YYYY-MM-DD" -> total
+        (history||[]).forEach(b => {
+            if (!b.date) return;
+            const ds = fmtDate(new Date(b.date));
+            _dashDailyMap[ds] = (_dashDailyMap[ds] || 0) + parseFloat(b.total||0);
+        });
+        // render ปฏิทินเดือนปัจจุบัน
+        _dashCalendarYear  = now.getFullYear();
+        _dashCalendarMonth = now.getMonth(); // 0-indexed
+        renderSalesCalendar();
+
+        // ── (1.4) NEW: Donut % เดือนนี้ vs เดือนที่แล้ว ──
+        renderMonthProgressChart(thisMonthSales, lastMonthSales);
+
         // ── (2) กราฟ 7 วันย้อนหลัง ──
         const labels7=[], salesData7=[], profitData7=[];
         for (let i=6; i>=0; i--) {
@@ -3522,13 +3731,41 @@ async function openDashboardModal() {
         if (mySales7DaysChart) mySales7DaysChart.destroy();
         const ctx7 = document.getElementById('sales7DaysChart');
         if (ctx7) {
+            // gradient พื้นหลังแบบ area
+            const ctx7raw = ctx7.getContext('2d');
+            const grad7Blue = ctx7raw.createLinearGradient(0, 0, 0, 240);
+            grad7Blue.addColorStop(0, 'rgba(99,102,241,0.35)');
+            grad7Blue.addColorStop(1, 'rgba(99,102,241,0)');
+            const grad7Orange = ctx7raw.createLinearGradient(0, 0, 0, 240);
+            grad7Orange.addColorStop(0, 'rgba(249,115,22,0.30)');
+            grad7Orange.addColorStop(1, 'rgba(249,115,22,0)');
+
             mySales7DaysChart = new Chart(ctx7, {
-                type:'bar',
+                type:'line',
                 data:{ labels:labels7, datasets:[
-                    { label:'ยอดขาย', data:salesData7, backgroundColor:'rgba(59,130,246,0.7)' },
-                    { label:'กำไรประมาณ', data:profitData7, backgroundColor:'rgba(16,185,129,0.5)' }
+                    { label:'ยอดขาย', data:salesData7,
+                      borderColor:'#6366f1', backgroundColor:grad7Blue,
+                      borderWidth:2.5, tension:0.45, fill:true,
+                      pointBackgroundColor:'#fff', pointBorderColor:'#6366f1',
+                      pointBorderWidth:2, pointRadius:4, pointHoverRadius:6 },
+                    { label:'กำไรประมาณ', data:profitData7,
+                      borderColor:'#f97316', backgroundColor:grad7Orange,
+                      borderWidth:2.5, tension:0.45, fill:true,
+                      pointBackgroundColor:'#fff', pointBorderColor:'#f97316',
+                      pointBorderWidth:2, pointRadius:4, pointHoverRadius:6 }
                 ]},
-                options:{ responsive:true, maintainAspectRatio:false }
+                options:{
+                    responsive:true, maintainAspectRatio:false,
+                    interaction:{ mode:'index', intersect:false },
+                    plugins:{
+                        legend:{ position:'bottom', labels:{ font:{ size:11, weight:'bold' }, boxWidth:12, padding:12, usePointStyle:true, pointStyle:'circle' } },
+                        tooltip:{ backgroundColor:'rgba(17,24,39,0.95)', padding:10, cornerRadius:8, titleFont:{ size:12, weight:'bold' }, callbacks:{ label:(ctx)=>` ${ctx.dataset.label}: ${Math.round(ctx.parsed.y).toLocaleString()} ฿` } }
+                    },
+                    scales:{
+                        x:{ grid:{ display:false }, ticks:{ font:{ size:11, weight:'bold' }, color:'#6b7280' } },
+                        y:{ grid:{ color:'rgba(229,231,235,0.6)', drawBorder:false }, ticks:{ font:{ size:10 }, color:'#9ca3af', callback:(v)=>v>=1000?(v/1000)+'k':v } }
+                    }
+                }
             });
         }
 
@@ -3548,13 +3785,40 @@ async function openDashboardModal() {
         if (mySalesChart) mySalesChart.destroy();
         const ctxY = document.getElementById('salesChart');
         if (ctxY) {
+            const ctxYraw = ctxY.getContext('2d');
+            const gradYBlue = ctxYraw.createLinearGradient(0, 0, 0, 260);
+            gradYBlue.addColorStop(0, 'rgba(99,102,241,0.4)');
+            gradYBlue.addColorStop(1, 'rgba(99,102,241,0)');
+            const gradYOrange = ctxYraw.createLinearGradient(0, 0, 0, 260);
+            gradYOrange.addColorStop(0, 'rgba(249,115,22,0.35)');
+            gradYOrange.addColorStop(1, 'rgba(249,115,22,0)');
+
             mySalesChart = new Chart(ctxY, {
-                type:'bar',
+                type:'line',
                 data:{ labels:labelsY, datasets:[
-                    { label:'ยอดขาย', data:salesDataY, backgroundColor:'rgba(99,102,241,0.7)' },
-                    { label:'กำไรประมาณ', data:profitDataY, backgroundColor:'rgba(16,185,129,0.5)' }
+                    { label:'ยอดขาย', data:salesDataY,
+                      borderColor:'#6366f1', backgroundColor:gradYBlue,
+                      borderWidth:3, tension:0.5, fill:true,
+                      pointBackgroundColor:'#fff', pointBorderColor:'#6366f1',
+                      pointBorderWidth:2, pointRadius:5, pointHoverRadius:7 },
+                    { label:'กำไรประมาณ', data:profitDataY,
+                      borderColor:'#f97316', backgroundColor:gradYOrange,
+                      borderWidth:3, tension:0.5, fill:true,
+                      pointBackgroundColor:'#fff', pointBorderColor:'#f97316',
+                      pointBorderWidth:2, pointRadius:5, pointHoverRadius:7 }
                 ]},
-                options:{ responsive:true, maintainAspectRatio:false }
+                options:{
+                    responsive:true, maintainAspectRatio:false,
+                    interaction:{ mode:'index', intersect:false },
+                    plugins:{
+                        legend:{ position:'bottom', labels:{ font:{ size:11, weight:'bold' }, boxWidth:12, padding:14, usePointStyle:true, pointStyle:'circle' } },
+                        tooltip:{ backgroundColor:'rgba(17,24,39,0.95)', padding:10, cornerRadius:8, titleFont:{ size:12, weight:'bold' }, callbacks:{ label:(ctx)=>` ${ctx.dataset.label}: ${Math.round(ctx.parsed.y).toLocaleString()} ฿` } }
+                    },
+                    scales:{
+                        x:{ grid:{ display:false }, ticks:{ font:{ size:11, weight:'bold' }, color:'#6b7280' } },
+                        y:{ grid:{ color:'rgba(229,231,235,0.6)', drawBorder:false }, ticks:{ font:{ size:10 }, color:'#9ca3af', callback:(v)=>v>=1000?(v/1000)+'k':v } }
+                    }
+                }
             });
         }
 
@@ -3566,7 +3830,7 @@ async function openDashboardModal() {
             if (top5.length === 0) {
                 // แสดงข้อความแทนกราฟถ้าไม่มีข้อมูล
                 const container = document.getElementById('dashTopItems_container');
-                if (container) container.innerHTML = '<p class="text-center text-gray-400 pt-10">ยังไม่มีข้อมูลเดือนนี้</p>';
+                if (container) container.innerHTML = '<p class="text-center text-gray-400 pt-10 text-sm">ยังไม่มีข้อมูลเดือนนี้</p>';
             } else {
                 myTop5PieChart = new Chart(ctxTop5, {
                     type:'doughnut',
@@ -3574,14 +3838,17 @@ async function openDashboardModal() {
                         labels: top5.map(x => x.name),
                         datasets:[{
                             data: top5.map(x => x.revenue),
-                            backgroundColor:['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6']
+                            backgroundColor:['#6366f1','#3b82f6','#f97316','#fb923c','#a78bfa'],
+                            borderWidth:3, borderColor:'#ffffff',
+                            hoverOffset:8
                         }]
                     },
                     options:{
                         responsive:true, maintainAspectRatio:false,
+                        cutout:'58%',
                         plugins:{
-                            legend:{ position:'right', labels:{ font:{ size:11 }, boxWidth:12 } },
-                            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
+                            legend:{ position:'right', labels:{ font:{ size:11, weight:'bold' }, boxWidth:10, padding:10, usePointStyle:true, pointStyle:'circle', color:'#374151' } },
+                            tooltip:{ backgroundColor:'rgba(17,24,39,0.95)', padding:10, cornerRadius:8, callbacks:{ label:(ctx)=>` ${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
                         }
                     }
                 });
@@ -3596,7 +3863,7 @@ async function openDashboardModal() {
             const container = document.getElementById('dashLastMonthTopItems_container');
             if (top3Last.length === 0) {
                 if (container) {
-                    container.innerHTML = '<p class="text-[10px] sm:text-xs font-bold text-indigo-400 mb-2">สินค้าขายดี (Top 3)</p><p class="text-center text-gray-400 text-xs pt-4">ไม่มีข้อมูลเดือนที่ผ่านมา</p>';
+                    container.innerHTML = '<p class="text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Top 3 สินค้าขายดี</p><p class="text-center text-gray-400 text-xs pt-4">ไม่มีข้อมูลเดือนที่ผ่านมา</p>';
                 }
             } else {
                 myTop3PieChart = new Chart(ctxTop3, {
@@ -3605,14 +3872,17 @@ async function openDashboardModal() {
                         labels: top3Last.map(x => x.name),
                         datasets:[{
                             data: top3Last.map(x => x.revenue),
-                            backgroundColor:['#6366f1','#22c55e','#f97316']
+                            backgroundColor:['#6366f1','#f97316','#a78bfa'],
+                            borderWidth:2, borderColor:'#ffffff',
+                            hoverOffset:6
                         }]
                     },
                     options:{
                         responsive:true, maintainAspectRatio:false,
+                        cutout:'60%',
                         plugins:{
-                            legend:{ position:'right', labels:{ font:{ size:10 }, boxWidth:10 } },
-                            tooltip:{ callbacks:{ label:(ctx)=>`${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
+                            legend:{ position:'right', labels:{ font:{ size:9, weight:'bold' }, boxWidth:8, padding:6, usePointStyle:true, pointStyle:'circle', color:'#374151' } },
+                            tooltip:{ backgroundColor:'rgba(17,24,39,0.95)', padding:8, cornerRadius:6, callbacks:{ label:(ctx)=>` ${ctx.label}: ${Math.round(ctx.parsed).toLocaleString()} ฿` } }
                         }
                     }
                 });
@@ -3630,13 +3900,14 @@ async function openDashboardModal() {
                 peakBoxLast.innerHTML = lastMonthPeakHours.map((h, i) => {
                     const pct = Math.round((h.count / maxCount) * 100);
                     const medal = i===0 ? '🥇' : i===1 ? '🥈' : '🥉';
+                    const colors = ['from-orange-400 to-orange-500','from-indigo-400 to-indigo-500','from-blue-400 to-blue-500'];
                     return `<div class="flex items-center gap-2 text-xs">
-                        <span class="w-5">${medal}</span>
-                        <span class="font-bold text-indigo-700 w-14">${h.label}</span>
-                        <div class="flex-1 bg-indigo-100 rounded-full h-2 overflow-hidden">
-                            <div class="bg-indigo-500 h-2 rounded-full" style="width:${pct}%"></div>
+                        <span class="w-5 text-base">${medal}</span>
+                        <span class="font-bold text-gray-700 w-16">${h.label}</span>
+                        <div class="flex-1 bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                            <div class="bg-gradient-to-r ${colors[i]} h-2.5 rounded-full transition-all" style="width:${pct}%"></div>
                         </div>
-                        <span class="text-indigo-600 font-bold w-10 text-right">${h.count} บิล</span>
+                        <span class="text-gray-700 font-bold w-14 text-right text-[11px]">${h.count} บิล</span>
                     </div>`;
                 }).join('');
             }
@@ -3651,14 +3922,19 @@ async function openDashboardModal() {
                 peakBox.innerHTML = '<p class="text-sm text-gray-400">ยังไม่มีข้อมูลเพียงพอสำหรับวิเคราะห์</p>';
             } else {
                 const maxCount = Math.max(...peakByDay.map(d => d.count));
+                // หาวันที่เยอะสุดเพื่อ highlight
                 peakBox.innerHTML = peakByDay.map(d => {
                     const pct = maxCount > 0 ? Math.round((d.count / maxCount) * 100) : 0;
-                    return `<div class="flex items-center gap-2 text-sm">
-                        <span class="font-bold text-gray-700 w-12">${d.dayName}</span>
-                        <div class="flex-1 bg-blue-100 rounded-full h-3 overflow-hidden">
-                            <div class="bg-gradient-to-r from-blue-400 to-blue-600 h-3 rounded-full transition-all" style="width:${pct}%"></div>
+                    const isTop = d.count === maxCount && maxCount > 0;
+                    const gradient = isTop
+                        ? 'from-orange-400 to-orange-500'
+                        : 'from-blue-400 to-blue-500';
+                    return `<div class="flex items-center gap-2.5 text-sm">
+                        <span class="font-extrabold text-gray-700 w-10 text-xs">${d.dayName}</span>
+                        <div class="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
+                            <div class="bg-gradient-to-r ${gradient} h-3 rounded-full transition-all" style="width:${pct}%"></div>
                         </div>
-                        <span class="text-blue-600 font-bold w-20 text-right text-xs">${d.count.toLocaleString()} บิล</span>
+                        <span class="${isTop ? 'text-orange-500' : 'text-blue-600'} font-bold w-16 text-right text-[11px]">${d.count.toLocaleString()} บิล</span>
                     </div>`;
                 }).join('');
             }
@@ -3754,6 +4030,122 @@ function aggregatePeakByDayOfWeek(bills) {
         counts[idx]++;
     });
     return dayNames.map((name, i) => ({ dayName: name, count: counts[i] }));
+}
+
+// ============================================================
+// 📅 SALES CALENDAR (heatmap แบบ GitHub)
+// ============================================================
+function renderSalesCalendar() {
+    const box = document.getElementById('salesCalendar');
+    const lbl = document.getElementById('calendarMonthLabel');
+    if (!box) return;
+
+    const thaiMonthNames = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    const y = _dashCalendarYear, m = _dashCalendarMonth;
+    if (lbl) lbl.innerText = `${thaiMonthNames[m]} ${y + 543}`;
+
+    // first day of month + จำนวนวัน
+    const firstDay = new Date(y, m, 1).getDay();      // 0=Sun
+    const daysInMonth = new Date(y, m+1, 0).getDate();
+    // เริ่มต้นสัปดาห์ที่ "จ." → shift: Mon=0
+    const offset = (firstDay + 6) % 7;
+
+    // หา max sales ของเดือนนี้ เพื่อ scale สี heatmap
+    const fmtDate = (yy, mm, dd) => `${yy}-${String(mm+1).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+    let maxDay = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+        const total = _dashDailyMap[fmtDate(y, m, d)] || 0;
+        if (total > maxDay) maxDay = total;
+    }
+
+    // วันนี้ (ไว้ highlight)
+    const now = new Date();
+    const todayDay = (now.getFullYear() === y && now.getMonth() === m) ? now.getDate() : -1;
+
+    // หัวสัปดาห์
+    const head = ['จ','อ','พ','พฤ','ศ','ส','อา'].map(d =>
+        `<div class="text-[9px] font-extrabold text-gray-400 pb-1">${d}</div>`
+    ).join('');
+
+    // ช่องว่างก่อนวันที่ 1
+    const blanks = Array(offset).fill('<div></div>').join('');
+
+    // กล่องวัน
+    const cells = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+        const ds = fmtDate(y, m, d);
+        const total = _dashDailyMap[ds] || 0;
+        // ความเข้มของสี: 0..1
+        const intensity = maxDay > 0 ? total / maxDay : 0;
+        let bgClass = 'bg-gray-50 text-gray-400';
+        if (intensity > 0)    bgClass = 'bg-blue-100 text-blue-700';
+        if (intensity > 0.25) bgClass = 'bg-blue-200 text-blue-800';
+        if (intensity > 0.5)  bgClass = 'bg-blue-400 text-white';
+        if (intensity > 0.75) bgClass = 'bg-blue-600 text-white';
+        if (intensity > 0.95) bgClass = 'bg-blue-800 text-white';
+        const ring = d === todayDay ? 'ring-2 ring-orange-400 ring-offset-1' : '';
+        const tip = total > 0
+            ? `${ds}: ${Math.round(total).toLocaleString()} ฿`
+            : `${ds}: ไม่มียอดขาย`;
+        cells.push(
+            `<div title="${tip}" class="aspect-square rounded-md ${bgClass} ${ring} flex items-center justify-center font-bold text-[10px] hover:scale-110 transition cursor-default">${d}</div>`
+        );
+    }
+
+    box.innerHTML = head + blanks + cells.join('');
+}
+
+function changeCalendarMonth(delta) {
+    _dashCalendarMonth += delta;
+    if (_dashCalendarMonth < 0)  { _dashCalendarMonth = 11; _dashCalendarYear--; }
+    if (_dashCalendarMonth > 11) { _dashCalendarMonth = 0;  _dashCalendarYear++; }
+    renderSalesCalendar();
+}
+
+// ============================================================
+// 🎯 MONTH PROGRESS DONUT (เดือนนี้ vs เดือนที่แล้ว)
+// ============================================================
+function renderMonthProgressChart(thisMonth, lastMonth) {
+    const ctx = document.getElementById('monthProgressChart');
+    const pctEl = document.getElementById('monthProgressPct');
+    if (!ctx) return;
+
+    // คำนวณเปอร์เซ็นต์: เดือนนี้คิดเป็น % ของเดือนที่แล้ว
+    let pct;
+    if (lastMonth === 0) {
+        pct = thisMonth > 0 ? 100 : 0;
+    } else {
+        pct = (thisMonth / lastMonth) * 100;
+    }
+    const displayPct = Math.min(Math.round(pct), 999);
+    if (pctEl) pctEl.innerText = displayPct + '%';
+
+    // ค่าที่ใส่ใน chart (จำกัด 100% สำหรับ ring แสดงผล)
+    const ringFill = Math.min(pct, 100);
+    const ringRest = Math.max(100 - pct, 0);
+
+    if (myMonthProgressChart) myMonthProgressChart.destroy();
+    myMonthProgressChart = new Chart(ctx, {
+        type:'doughnut',
+        data:{
+            datasets:[{
+                data:[ringFill, ringRest],
+                backgroundColor:[
+                    pct >= 100 ? '#34d399' : '#fbbf24',
+                    'rgba(255,255,255,0.2)'
+                ],
+                borderWidth:0,
+                circumference: 360,
+                rotation: -90,
+                cutout: '78%'
+            }]
+        },
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false }, tooltip:{ enabled:false } },
+            animation:{ animateRotate:true, duration:900 }
+        }
+    });
 }
 
 // ============================================================
