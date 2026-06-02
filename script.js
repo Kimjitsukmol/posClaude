@@ -4093,11 +4093,19 @@ function renderSalesCalendar() {
         if (intensity > 0.75) bgClass = 'bg-blue-600 text-white';
         if (intensity > 0.95) bgClass = 'bg-blue-800 text-white';
         const ring = d === todayDay ? 'ring-2 ring-orange-400 ring-offset-1' : '';
+        
         const tip = total > 0
             ? `${ds}: ${Math.round(total).toLocaleString()} ฿`
             : `${ds}: ไม่มียอดขาย`;
+            
+        // แก้ไขส่วนนี้: เปลี่ยนเป็น Custom Tooltip ที่รองรับการแตะบนมือถือ/แท็บเล็ต
         cells.push(
-            `<div title="${tip}" class="aspect-square rounded-md ${bgClass} ${ring} flex items-center justify-center font-bold text-[10px] hover:scale-110 transition cursor-default">${d}</div>`
+            `<div tabindex="0" onclick="" class="group relative aspect-square rounded-md ${bgClass} ${ring} flex items-center justify-center font-bold text-[10px] hover:scale-110 transition cursor-pointer focus:outline-none">
+                ${d}
+                <div class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 hidden group-hover:block group-focus:block w-max bg-gray-800 text-white text-[11px] px-2 py-1 rounded shadow-lg">
+                    ${tip}
+                </div>
+            </div>`
         );
     }
 
