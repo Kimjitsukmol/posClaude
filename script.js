@@ -2509,7 +2509,16 @@ function openEditMenu(index, e) {
     document.getElementById('eId').value = item.id; document.getElementById('eName').value = item.name;
     document.getElementById('ePrice').value = item.price; document.getElementById('eCategory').value = item.category;
 }
-function openAddMenuModal() { document.getElementById('addModal').classList.remove('hidden'); }
+function openAddMenuModal() { 
+    // เปิดหน้าต่างเพิ่มสินค้า
+    document.getElementById('addModal').classList.remove('hidden'); 
+    
+    // บังคับกำหนดค่าเริ่มต้นของหมวดหมู่ให้เป็น "เบ็ดเตล็ด" เสมอ
+    const mCategory = document.getElementById('mCategory');
+    if (mCategory) {
+        mCategory.value = 'เบ็ดเตล็ด';
+    }
+}
 
 let salesModalTimer = null;
 async function openSalesModal() {
