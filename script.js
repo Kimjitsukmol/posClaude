@@ -867,18 +867,29 @@ function openRecallModal() {
 }
 
 function recallBill(index) {
+    if (cart.length > 0) {
+        openConfirmActionModal('เรียกบิลที่พักไว้', 'มีรายการค้างอยู่ในตะกร้า ต้องการเคลียร์และเรียกบิลเก่าไหม?',
+            '<i class="fas fa-clipboard-list text-orange-500"></i>', () => _doRecallBill(index));
+        return;
+    }
+    _doRecallBill(index);
+}
+
+function _doRecallBill(index) {
     let heldBills = JSON.parse(localStorage.getItem('heldBills') || "[]");
-    if (cart.length > 0) { if (!confirm("มีรายการค้างอยู่ในตะกร้า ต้องการเคลียร์และเรียกบิลเก่าไหม?")) return; }
+    if (!heldBills[index]) return;
     cart = heldBills[index].items; heldBills.splice(index, 1);
     localStorage.setItem('heldBills', JSON.stringify(heldBills));
     closeModal('recallModal'); renderCart(); showToast('เรียกบิลกลับมาแล้ว', 'success');
 }
 
 function deleteHeldBill(index) {
-    if (!confirm("ต้องการลบบิลนี้ใช่ไหม?")) return;
-    let heldBills = JSON.parse(localStorage.getItem('heldBills') || "[]");
-    heldBills.splice(index, 1); localStorage.setItem('heldBills', JSON.stringify(heldBills));
-    if (heldBills.length === 0) { closeModal('recallModal'); showToast('ลบบิลหมดแล้ว', 'success'); } else { openRecallModal(); }
+    openConfirmActionModal('ลบบิลที่พักไว้', 'ต้องการลบบิลนี้ใช่ไหม?',
+        '<i class="fas fa-trash-alt text-red-500"></i>', () => {
+        let heldBills = JSON.parse(localStorage.getItem('heldBills') || "[]");
+        heldBills.splice(index, 1); localStorage.setItem('heldBills', JSON.stringify(heldBills));
+        if (heldBills.length === 0) { closeModal('recallModal'); showToast('ลบบิลหมดแล้ว', 'success'); } else { openRecallModal(); }
+    });
 }
 
 function renderCategoryBar() {
@@ -1356,10 +1367,15 @@ async function updateStockMin(productId, newMin) {
 }
 
 async function adjustStock(productId, productName, currentQty, mode) {
-    const prompt = mode === 'add'
-        ? `เพิ่มสต็อก "${productName}" กี่ชิ้น? (ปัจจุบัน: ${currentQty})`
-        : `ตั้งสต็อก "${productName}" เป็น? (ปัจจุบัน: ${currentQty})`;
-    const val = window.prompt(prompt);
+    const title = mode === 'add'
+        ? `เพิ่มสต็อก "${productName}"`
+        : `ตั้งสต็อก "${productName}"`;
+    const val = await showPromptModal(title, {
+        type: 'number',
+        defaultValue: mode === 'add' ? '' : currentQty,
+        placeholder: mode === 'add' ? `จำนวนที่เพิ่ม (ปัจจุบัน ${currentQty})` : `ปัจจุบัน ${currentQty}`,
+        icon: mode === 'add' ? '<i class="fas fa-plus-circle text-green-500"></i>' : '<i class="fas fa-boxes text-blue-500"></i>'
+    });
     if (val === null || val === '') return;
     const num = parseInt(val);
     if (isNaN(num) || num < 0) { showToast('กรุณากรอกตัวเลขที่ถูกต้อง', 'warning'); return; }
@@ -1399,12 +1415,12 @@ async function openBarcodeScanner(targetInputId = 'stockSearchInput') {
     // ── ขั้นตอนที่ 1: เช็คความพร้อมของระบบ ก่อนเปิด modal ──
     // 1A. ไลบรารีโหลดมาหรือยัง
     if (typeof Html5Qrcode === 'undefined') {
-        alert('❌ ไลบรารีสแกนบาร์โค้ดยังไม่พร้อม\n\nกรุณา:\n1. ตรวจสอบว่าเครือข่ายอินเทอร์เน็ตปกติ\n2. รีเฟรชหน้าจอ (Pull-to-refresh)');
+        showCustomAlert('สแกนเนอร์ยังไม่พร้อม', 'ไลบรารีสแกนบาร์โค้ดยังโหลดไม่เสร็จ\n\n1. ตรวจสอบว่าเครือข่ายอินเทอร์เน็ตปกติ\n2. รีเฟรชหน้าจอ (Pull-to-refresh)', '<i class="fas fa-wifi text-yellow-500"></i>');
         return;
     }
     // 1B. เบราว์เซอร์รองรับกล้องไหม (mediaDevices API)
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('❌ เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง\n\nกรุณาใช้ Chrome หรือ Safari เวอร์ชันใหม่');
+        showCustomAlert('เบราว์เซอร์ไม่รองรับกล้อง', 'กรุณาใช้ Chrome หรือ Safari เวอร์ชันใหม่', '<i class="fas fa-camera text-red-500"></i>');
         return;
     }
     // 1C. ต้อง HTTPS (หรือ localhost) เท่านั้น — เป็นข้อบังคับของเบราว์เซอร์
@@ -1413,7 +1429,7 @@ async function openBarcodeScanner(targetInputId = 'stockSearchInput') {
                      location.hostname === 'localhost' ||
                      location.hostname === '127.0.0.1';
     if (!isSecure) {
-        alert('❌ การใช้กล้องต้องใช้ HTTPS\n\nหน้านี้เปิดผ่าน ' + location.protocol + ' ซึ่งเบราว์เซอร์ไม่อนุญาตให้เข้าถึงกล้อง\n\nกรุณาเปิดเว็บผ่าน https:// หรือ localhost');
+        showCustomAlert('ต้องเปิดผ่าน HTTPS', 'หน้านี้เปิดผ่าน ' + location.protocol + ' ซึ่งเบราว์เซอร์ไม่อนุญาตให้เข้าถึงกล้อง\n\nกรุณาเปิดเว็บผ่าน https:// หรือ localhost', '<i class="fas fa-lock text-red-500"></i>');
         return;
     }
 
@@ -1441,7 +1457,7 @@ async function openBarcodeScanner(targetInputId = 'stockSearchInput') {
     } catch(e) {
         console.error('Html5Qrcode constructor failed:', e);
         document.getElementById('barcodeHint').innerText = '❌ สร้าง scanner ไม่ได้: ' + (e.message || e);
-        alert('❌ สร้าง scanner ไม่ได้: ' + (e.message || e));
+        showCustomAlert('เปิดสแกนเนอร์ไม่ได้', String(e.message || e), '<i class="fas fa-camera text-red-500"></i>');
         return;
     }
 
@@ -1494,7 +1510,7 @@ async function _startBarcodeCamera(facingMode) {
             userMsg = '❌ เปิดกล้องไม่ได้\n\nรายละเอียด: ' + errStr;
         }
         hint.innerText = userMsg.split('\n')[0];
-        alert(userMsg);
+        showCustomAlert('ใช้งานกล้องไม่ได้', userMsg.replace(/^❌\s*/, ''), '<i class="fas fa-camera text-red-500"></i>');
     }
 }
 
@@ -1665,7 +1681,7 @@ function savePromptPayID() {
         if (cleanID.length === 10 || cleanID.length === 13) {
             localStorage.setItem('promptPayID', cleanID); showToast('บันทึก PromptPay แล้ว', 'success');
             initBankQR(); closeModal('promptPayModal');
-        } else { alert("เบอร์โทรต้องมี 10 หลัก หรือ เลขบัตร 13 หลัก"); }
+        } else { showCustomAlert('หมายเลขไม่ถูกต้อง', 'เบอร์โทรต้องมี 10 หลัก หรือ เลขบัตรประชาชน/Tax ID 13 หลัก', '<i class="fas fa-exclamation-triangle text-yellow-500"></i>'); }
     } else { clearPromptPayID(); }
 }
 
@@ -1694,14 +1710,16 @@ function openManageQRModal(hasFile) {
     modal.classList.remove('hidden');
 }
 
-async function deleteServerQR() {
-    if (!confirm("ต้องการลบรูปภาพใช่หรือไม่?")) return;
-    setLoading('btnDeleteQR', true, 'กำลังลบ...');
-    try {
-        await dbDelete('settings', 'bankQR');
-        localStorage.removeItem('bankQRID'); initBankQR(); openManageQRModal(false); showToast('ลบรูปภาพเรียบร้อย', 'success');
-    } catch(err) { alert('ลบไม่สำเร็จ: ' + err); }
-    finally { setLoading('btnDeleteQR', false, 'ลบรูปภาพเดิม'); }
+function deleteServerQR() {
+    openConfirmActionModal('ลบรูป QR Code', 'ต้องการลบรูปภาพ QR Code นี้ใช่หรือไม่?',
+        '<i class="fas fa-trash-alt text-red-500"></i>', async () => {
+        setLoading('btnDeleteQR', true, 'กำลังลบ...');
+        try {
+            await dbDelete('settings', 'bankQR');
+            localStorage.removeItem('bankQRID'); initBankQR(); openManageQRModal(false); showToast('ลบรูปภาพเรียบร้อย', 'success');
+        } catch(err) { showCustomAlert('ลบไม่สำเร็จ', String(err?.message || err), '<i class="fas fa-exclamation-circle text-red-500"></i>'); }
+        finally { setLoading('btnDeleteQR', false, 'ลบรูปภาพเดิม'); }
+    });
 }
 
 function crc16(data) {
@@ -2346,15 +2364,6 @@ async function setDeliveryStatus(orderId, newStatus, btn) {
     btn.disabled = false;
 }
 
-async function updateDeliveryStatus(orderId) {
-    const statuses = ['รอยืนยัน', 'กำลังจัดเตรียม', 'กำลังจัดส่ง', 'ส่งแล้ว'];
-    const choice = window.prompt(`เลือกสถานะ:\n${statuses.map((s,i)=>`${i+1}. ${s}`).join('\n')}\n\nพิมพ์เลข 1-4`);
-    const idx = parseInt(choice) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= statuses.length) return;
-    const { error } = await _supa.from('orders').update({ delivery_status: statuses[idx] }).eq('order_id', orderId);
-    if (!error) { showToast(`อัปเดตสถานะ: ${statuses[idx]}`, 'success'); fetchOrders(); }
-}
-
 async function markServed(orderId, btn) {
     const originalContent = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
     try {
@@ -2363,18 +2372,6 @@ async function markServed(orderId, btn) {
         fetchOrders(); showToast('จัดเสร็จแล้ว ✅', 'success');
     } catch(e) { btn.disabled = false; btn.innerHTML = originalContent; }
 }
-
-async function updateDeliveryStatus(orderId) {
-    const statuses = ['รอยืนยัน', 'กำลังจัดเตรียม', 'กำลังจัดส่ง', 'ส่งแล้ว'];
-    const statusStr = statuses.join('\n');
-    const choice = window.prompt(`เลือกสถานะจัดส่ง:\n${statuses.map((s,i) => `${i+1}. ${s}`).join('\n')}\n\nพิมพ์เลข 1-4`);
-    const idx = parseInt(choice) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= statuses.length) return;
-    const { error } = await _supa.from('orders').update({ delivery_status: statuses[idx] }).eq('order_id', orderId);
-    if (!error) { showToast(`อัปเดตสถานะ: ${statuses[idx]}`, 'success'); fetchOrders(); }
-}
-
-
 
 function openPayment(orderId) {
     currentPayOrder = currentOrders.find(o => String(o.orderId) === String(orderId));
@@ -2846,6 +2843,8 @@ async function toggleStoreStatus() {
 
 function updateStoreUI() {
     const bg = document.getElementById('storeToggleBg'); const dot = document.getElementById('storeToggleDot'); const text = document.getElementById('storeStatusText');
+    // ป้องกัน error กรณี element ไม่มีในหน้า (UI ปุ่มเปิด/ปิดร้านถูกย้ายไปที่การตั้งค่าเดลิเวอรี่)
+    if (!bg || !dot || !text) return;
     if (isStoreOpen) { bg.className = "w-10 h-5 rounded-full relative transition-colors duration-300 shadow-inner flex items-center bg-green-500"; dot.style.transform = "translateX(20px)"; text.innerText = "เปิด"; }
     else { bg.className = "w-10 h-5 rounded-full relative transition-colors duration-300 shadow-inner flex items-center bg-red-500"; dot.style.transform = "translateX(0px)"; text.innerText = "ปิด"; }
 }
@@ -3168,18 +3167,16 @@ function checkMode() {
 // ============================================================
 function confirmLogout() { localStorage.removeItem('isLoggedIn'); localStorage.removeItem('userPhone'); location.reload(); }
 
-function submitChangePassword() {
-    const phoneVal = document.getElementById('changePassPhone').value.trim(); const newPass = document.getElementById('newPasswordInput').value.trim();
-    if (!phoneVal) { alert("กรุณาระบุเบอร์โทรศัพท์"); return; } if (!newPass) { alert("กรุณากรอกรหัสผ่านใหม่"); return; }
-    setLoading('btnSubmitChangePass', true, 'กำลังบันทึก...');
-    setTimeout(() => { showToast('เปลี่ยนรหัสผ่านเรียบร้อย','success'); closeModal('changePassModal'); localStorage.setItem('userPhone', phoneVal); setLoading('btnSubmitChangePass', false, 'บันทึกรหัสผ่านใหม่'); }, 500);
-}
+// หมายเหตุ: ฟังก์ชัน submitChangePassword เดิมถูกลบออก
+// (อ้างอิง element ที่ไม่มีอยู่จริง + ไม่ได้บันทึกลง Supabase + ไม่มี UI เรียกใช้งาน)
 
 // ============================================================
 // 🧩 MODALS & UI HELPERS
 // ============================================================
 function closeModal(id) {
-    document.getElementById(id).classList.add('hidden');
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add('hidden');
     if (id === 'paymentModal') { const leftPanel = document.getElementById('leftPanel'); if(leftPanel) leftPanel.classList.remove('blur-sm','opacity-50','pointer-events-none'); const mw = document.getElementById('modalTotalWrapper'); if(mw) mw.classList.remove('scale-50','opacity-40','-translate-y-2'); }
     setTimeout(() => { const s = document.getElementById('searchInput'); if(s && !isCustomerMode){s.focus();s.value='';} }, 100);
 }
@@ -3194,6 +3191,30 @@ function showToast(msg, type = 'success') {
 
 function showCustomAlert(title, msg, icon = '<i class="fas fa-info-circle text-blue-500"></i>') { document.getElementById('alertTitle').innerText = title; document.getElementById('alertMsg').innerText = msg; document.getElementById('alertIcon').innerHTML = icon; document.getElementById('customAlert').classList.remove('hidden'); }
 function closeCustomAlert() { document.getElementById('customAlert').classList.add('hidden'); }
+
+// ── Promise-based styled prompt (แทน window.prompt ของเบราว์เซอร์) ──
+// opts: { defaultValue, placeholder, type='number', icon, okText }
+function showPromptModal(title, opts = {}) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('genericPromptModal');
+        const input = document.getElementById('promptModalInput');
+        const okBtn = document.getElementById('promptModalOk');
+        const cancelBtn = document.getElementById('promptModalCancel');
+        if (!modal || !input) { resolve(window.prompt(title, opts.defaultValue || '')); return; }
+        document.getElementById('promptModalTitle').innerText = title;
+        document.getElementById('promptModalIcon').innerHTML = opts.icon || '<i class="fas fa-keyboard"></i>';
+        input.type = opts.type || 'number';
+        input.inputMode = (opts.type === 'text') ? 'text' : 'numeric';
+        input.value = (opts.defaultValue != null) ? opts.defaultValue : '';
+        input.placeholder = opts.placeholder || '';
+        okBtn.innerText = opts.okText || 'ตกลง';
+        modal.classList.remove('hidden');
+        setTimeout(() => { input.focus(); input.select(); }, 100);
+        const cleanup = () => { modal.classList.add('hidden'); okBtn.onclick = null; cancelBtn.onclick = null; };
+        okBtn.onclick = () => { const v = input.value; cleanup(); resolve(v); };
+        cancelBtn.onclick = () => { cleanup(); resolve(null); };
+    });
+}
 
 function setLoading(btnId, isLoading, text) {
     const btn = document.getElementById(btnId); if (!btn) return;
@@ -3607,6 +3628,33 @@ let myMonthProgressChart = null;
 let _dashDailyMap = {};       // { 'YYYY-MM-DD': total }
 let _dashCalendarYear  = new Date().getFullYear();
 let _dashCalendarMonth = new Date().getMonth();
+// ── สถานะสำหรับ "เลือกวัน" ในปฏิทิน ──
+let _dashSelectedDate  = null;   // 'YYYY-MM-DD' ที่กำลังเลือกดู
+let _dashTodayStr      = null;   // วันนี้ (string) — ใช้ทำ default + เทียบ
+let _dashHistoryBills  = [];     // บิลที่โหลดไว้แล้ว (เดือนนี้ + เดือนที่แล้ว + 7 วัน)
+let _dashProfitPercent = 0.125;  // % กำไรล่าสุด (เก็บไว้ให้ selectDashDay ใช้)
+let _dashRangeLowerStr = '';     // ขอบล่างของช่วงบิลที่โหลดไว้ (YYYY-MM-DD)
+let _dashRangeUpperStr = '';     // ขอบบน (exclusive)
+
+// helper ระดับ module สำหรับเซ็ตข้อความ (selectDashDay เรียกใช้นอก openDashboardModal)
+function _dashSetText(id, val) { const el = document.getElementById(id); if (el) el.innerText = val; }
+// แปลง 'YYYY-MM-DD' เป็นข้อความไทยสั้น เช่น "5 มิ.ย."
+function _dashThaiShort(dateStr) {
+    const m = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    const p = dateStr.split('-'); return `${parseInt(p[2])} ${m[parseInt(p[1])-1]}`;
+}
+
+// บันทึก % กำไรประเมินไว้ใน localStorage แล้วโหลด dashboard ใหม่
+function onChangeDashProfit() {
+    const input = document.getElementById('dashProfitInput');
+    if (input) {
+        let v = parseFloat(input.value);
+        if (isNaN(v) || v < 0) v = 0; if (v > 100) v = 100;
+        input.value = v;
+        localStorage.setItem('dashProfitMargin', String(v));
+    }
+    openDashboardModal();
+}
 
 async function openDashboardModal() {
     closeModal('exportModal');
@@ -3617,6 +3665,9 @@ async function openDashboardModal() {
     try {
         const now = new Date();
         const profitInput = document.getElementById('dashProfitInput');
+        // โหลดค่า % กำไรที่บันทึกไว้ (ถ้ามี) เพื่อไม่ให้รีเซ็ตเป็น 12.5 ทุกครั้งที่เปิด
+        const savedMargin = localStorage.getItem('dashProfitMargin');
+        if (profitInput && savedMargin !== null && savedMargin !== '') profitInput.value = savedMargin;
         const profitMarginVal = profitInput ? parseFloat(profitInput.value)||12.5 : 12.5;
         const profitPercent = profitMarginVal / 100;
         const label1 = document.getElementById('dashProfitLabel1');
@@ -3716,6 +3767,14 @@ async function openDashboardModal() {
             const ds = fmtDate(new Date(b.date));
             _dashDailyMap[ds] = (_dashDailyMap[ds] || 0) + parseFloat(b.total||0);
         });
+        // ── เก็บข้อมูลไว้ให้ "การเลือกวัน" ในปฏิทินใช้งาน ──
+        _dashHistoryBills  = history || [];
+        _dashProfitPercent = profitPercent;
+        _dashTodayStr      = todayStr;
+        _dashSelectedDate  = todayStr; // ค่าเริ่มต้น = วันนี้เสมอ (รีเฟรชแล้วกลับมาวันนี้)
+        _dashRangeLowerStr = fmtDate(detailLower);
+        _dashRangeUpperStr = fmtDate(thisMonthEnd);
+
         // render ปฏิทินเดือนปัจจุบัน
         _dashCalendarYear  = now.getFullYear();
         _dashCalendarMonth = now.getMonth(); // 0-indexed
@@ -3791,6 +3850,12 @@ async function openDashboardModal() {
         }
         const avgM = salesDataY.filter(x=>x>0);
         setEl('avgMonthly', 'เฉลี่ย: '+(avgM.length>0 ? Math.round(avgM.reduce((a,b)=>a+b,0)/avgM.length).toLocaleString() : 0)+' ฿/เดือน');
+        // ── ยอดขาย + กำไรประเมินรวมทั้งปี (ม.ค. ถึงเดือนปัจจุบัน) ──
+        const yearTotalSales  = salesDataY.reduce((a,b)=>a+b,0);
+        const yearTotalProfit = profitDataY.reduce((a,b)=>a+b,0);
+        setEl('dashYearSales',  Math.round(yearTotalSales).toLocaleString());
+        setEl('dashYearProfit', Math.round(yearTotalProfit).toLocaleString());
+        setEl('dashYearLabel',  'พ.ศ. ' + (now.getFullYear()+543));
         if (mySalesChart) mySalesChart.destroy();
         const ctxY = document.getElementById('salesChart');
         if (ctxY) {
@@ -4070,6 +4135,12 @@ function renderSalesCalendar() {
     // วันนี้ (ไว้ highlight)
     const now = new Date();
     const todayDay = (now.getFullYear() === y && now.getMonth() === m) ? now.getDate() : -1;
+    // วันที่ถูกเลือกอยู่ (ไว้ highlight แบบเข้ม)
+    let selDay = -1;
+    if (_dashSelectedDate) {
+        const sp = _dashSelectedDate.split('-');
+        if (parseInt(sp[0]) === y && parseInt(sp[1]) - 1 === m) selDay = parseInt(sp[2]);
+    }
 
     // หัวสัปดาห์
     const head = ['จ','อ','พ','พฤ','ศ','ส','อา'].map(d =>
@@ -4092,15 +4163,18 @@ function renderSalesCalendar() {
         if (intensity > 0.5)  bgClass = 'bg-blue-400 text-white';
         if (intensity > 0.75) bgClass = 'bg-blue-600 text-white';
         if (intensity > 0.95) bgClass = 'bg-blue-800 text-white';
-        const ring = d === todayDay ? 'ring-2 ring-orange-400 ring-offset-1' : '';
-        
+        // เน้นวันที่เลือกอยู่ให้ชัดที่สุด, รองลงมาคือวันนี้
+        let ring = '';
+        if (d === selDay)        ring = 'ring-2 ring-blue-600 ring-offset-2 scale-105 shadow-md';
+        else if (d === todayDay) ring = 'ring-2 ring-orange-400 ring-offset-1';
+
         const tip = total > 0
             ? `${ds}: ${Math.round(total).toLocaleString()} ฿`
             : `${ds}: ไม่มียอดขาย`;
-            
+
         // แก้ไขส่วนนี้: เปลี่ยนเป็น Custom Tooltip ที่รองรับการแตะบนมือถือ/แท็บเล็ต
         cells.push(
-            `<div tabindex="0" onclick="" class="group relative aspect-square rounded-md ${bgClass} ${ring} flex items-center justify-center font-bold text-[10px] hover:scale-110 transition cursor-pointer focus:outline-none">
+            `<div tabindex="0" onclick="selectDashDay('${ds}')" class="group relative aspect-square rounded-md ${bgClass} ${ring} flex items-center justify-center font-bold text-[10px] hover:scale-110 transition cursor-pointer focus:outline-none">
                 ${d}
                 <div class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 z-50 hidden group-hover:block group-focus:block w-max bg-gray-800 text-white text-[11px] px-2 py-1 rounded shadow-lg">
                     ${tip}
@@ -4117,6 +4191,63 @@ function changeCalendarMonth(delta) {
     if (_dashCalendarMonth < 0)  { _dashCalendarMonth = 11; _dashCalendarYear--; }
     if (_dashCalendarMonth > 11) { _dashCalendarMonth = 0;  _dashCalendarYear++; }
     renderSalesCalendar();
+}
+
+// ── เลือกวันในปฏิทิน → อัปเดตการ์ดรายวัน (ยอดขาย/กำไร/จำนวนบิล/เฉลี่ยต่อบิล) ──
+async function selectDashDay(dateStr) {
+    if (!dateStr) return;
+    _dashSelectedDate = dateStr;
+    renderSalesCalendar(); // ย้าย highlight ไปวันที่เลือก
+
+    const profitPercent = _dashProfitPercent || 0.125;
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+    // ถ้าวันที่อยู่ในช่วงบิลที่โหลดไว้แล้ว ใช้ cache; ไม่งั้นดึงเฉพาะวันนั้นจาก Supabase
+    let bills = _dashHistoryBills;
+    const inLoadedRange = (dateStr >= _dashRangeLowerStr && dateStr < _dashRangeUpperStr);
+    if (!inLoadedRange) {
+        const start = new Date(dateStr + 'T00:00:00');
+        const end   = new Date(start.getTime() + 86400000);
+        try { bills = await fetchBillsInRange(start.toISOString(), end.toISOString()); }
+        catch(e) { bills = []; }
+    }
+
+    let sales = 0, count = 0;
+    (bills || []).forEach(b => {
+        if (b.date && fmt(new Date(b.date)) === dateStr) { sales += parseFloat(b.total||0); count++; }
+    });
+    const profit = sales * profitPercent;
+    const avg    = count > 0 ? Math.round(sales / count) : 0;
+
+    _dashSetText('dashTodaySales',  Math.round(sales).toLocaleString());
+    _dashSetText('dashTodayProfit', Math.round(profit).toLocaleString());
+    _dashSetText('dashTodayBills',  count.toLocaleString());
+    _dashSetText('dashAvgPerBill',  avg.toLocaleString());
+
+    // เทียบกับวันก่อนหน้า
+    const prevStr = fmt(new Date(new Date(dateStr + 'T00:00:00').getTime() - 86400000));
+    const prevSales = _dashDailyMap[prevStr] || 0;
+    const isToday  = dateStr === _dashTodayStr;
+    const cmpLabel = isToday ? 'เทียบเมื่อวาน' : 'เทียบวันก่อนหน้า';
+    const growthEl = document.getElementById('dashGrowth');
+    const arrowEl  = document.getElementById('dashTodayArrow');
+    if (growthEl) {
+        if (prevSales === 0) {
+            growthEl.innerHTML = `<span class="text-gray-400">ไม่มียอดวันก่อนหน้า</span>`;
+            if (arrowEl) arrowEl.className = 'fas fa-minus text-gray-400 text-sm';
+        } else {
+            const diffPct = ((sales - prevSales) / prevSales) * 100;
+            const up = diffPct >= 0;
+            growthEl.innerHTML = `<span class="${up?'text-green-500':'text-red-500'} font-extrabold">${up?'▲':'▼'} ${Math.abs(diffPct).toFixed(1)}%</span> <span class="text-gray-400">${cmpLabel}</span>`;
+            if (arrowEl) arrowEl.className = `fas ${up ? 'fa-arrow-up text-green-500' : 'fa-arrow-down text-red-500'} text-sm`;
+        }
+    }
+
+    // ปรับ label การ์ดให้บอกว่าเป็นวันไหน
+    const dLabel = isToday ? 'วันนี้' : _dashThaiShort(dateStr);
+    _dashSetText('dashKpiSalesLabel', isToday ? 'ยอดขายวันนี้' : 'ยอดขาย ' + dLabel);
+    _dashSetText('dashKpiBillsLabel', isToday ? 'จำนวนบิลวันนี้' : 'จำนวนบิล ' + dLabel);
+    _dashSetText('dashKpiProfitSub',  isToday ? 'ประมาณการกำไรวันนี้' : 'ประมาณการกำไร ' + dLabel);
 }
 
 // ============================================================
@@ -4270,11 +4401,18 @@ async function backupData() {
 }
 
 async function restoreData(event) {
-    const file = event.target.files[0];
+    const fileInput = event.target;
+    const file = fileInput.files[0];
     if (!file) return;
-    if (!confirm('⚠️ การกู้คืนจะเขียนทับข้อมูลที่มีอยู่ ต้องการดำเนินการต่อไหม?')) {
-        event.target.value = ''; return;
-    }
+    openConfirmActionModal('กู้คืนข้อมูล', '⚠️ การกู้คืนจะเขียนทับข้อมูลที่มีอยู่\nต้องการดำเนินการต่อไหม?',
+        '<i class="fas fa-database text-orange-500"></i>',
+        () => _doRestoreData(file, fileInput));
+    // ถ้าผู้ใช้กดยกเลิก ให้รีเซ็ต input (confirmActionModal ปุ่มยกเลิกแค่ปิด modal)
+    const cancelOnce = () => { fileInput.value = ''; };
+    setTimeout(cancelOnce, 0); // input ถูกล้างทันที; การยืนยันจะอ่านจากตัวแปร file ที่ถือไว้แล้ว
+}
+
+async function _doRestoreData(file, fileInput) {
     setLoading('btnRestore', true, 'กำลังกู้คืน...');
     const reader = new FileReader();
     reader.onload = async function(e) {
@@ -4294,7 +4432,7 @@ async function restoreData(event) {
                     try { await dbPut('history', bill); count++; } catch(e) {}
                 }
             }
-            event.target.value = '';
+            if (fileInput) fileInput.value = '';
             localStorage.removeItem('cachedMenuData');
             showToast(`กู้คืนสำเร็จ ${count} รายการ — กำลังรีโหลด...`, 'success');
             setTimeout(() => location.reload(), 2000);
@@ -4643,19 +4781,21 @@ function quickEditProduct(productId) {
     }
 }
 
-async function quickDeleteProduct(productId, productName, btn) {
-    if (!confirm(`ลบสินค้า "${productName}" ใช่ไหม?`)) return;
-    btn.disabled = true; btn.innerText = '...';
-    try {
-        await dbDelete('menu', productId);
-        menuData = menuData.filter(m => m.id != productId);
-        masterData = masterData.filter(m => m.id != productId);
-        localStorage.removeItem('cachedMenuData');
-        showToast(`ลบ "${productName}" แล้ว`, 'success');
-        loadProductModal();
-        filterMenu('All');
-    } catch(e) {
-        btn.disabled = false; btn.innerText = 'ลบ';
-        showCustomAlert('ผิดพลาด', 'ลบไม่สำเร็จ: ' + e.message);
-    }
+function quickDeleteProduct(productId, productName, btn) {
+    openConfirmActionModal('ลบสินค้า', `ต้องการลบสินค้า "${productName}" ใช่ไหม?\nการลบนี้ไม่สามารถย้อนกลับได้`,
+        '<i class="fas fa-trash-alt text-red-500"></i>', async () => {
+        if (btn) { btn.disabled = true; btn.innerText = '...'; }
+        try {
+            await dbDelete('menu', productId);
+            menuData = menuData.filter(m => m.id != productId);
+            masterData = masterData.filter(m => m.id != productId);
+            localStorage.removeItem('cachedMenuData');
+            showToast(`ลบ "${productName}" แล้ว`, 'success');
+            loadProductModal();
+            filterMenu('All');
+        } catch(e) {
+            if (btn) { btn.disabled = false; btn.innerText = 'ลบ'; }
+            showCustomAlert('ผิดพลาด', 'ลบไม่สำเร็จ: ' + (e?.message || e), '<i class="fas fa-exclamation-circle text-red-500"></i>');
+        }
+    });
 }
