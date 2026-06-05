@@ -894,8 +894,8 @@ function deleteHeldBill(index) {
 
 function renderCategoryBar() {
     const bar = document.getElementById('categoryBar');
-    bar.innerHTML = `<button onclick="filterMenu('All')" class="cat-btn bg-gradient-to-r from-blue-500 to-blue-400 text-white px-5 py-2 rounded-full shadow-md text-sm font-bold transition transform hover:scale-105 border border-blue-600 shrink-0">ทั้งหมด</button>` +
-        categories.map(c => `<button onclick="filterMenu('${c}')" class="cat-btn bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 px-5 py-2 rounded-full shadow-sm text-sm font-medium transition border border-gray-200 shrink-0">${c}</button>`).join('');
+    bar.innerHTML = `<button onclick="filterMenu('All')" class="cat-btn bg-gradient-to-r from-blue-500 to-blue-400 text-white px-5 py-2 rounded-full shadow-md text-sm font-bold transition transform hover:scale-105 border border-blue-600 shrink-0">🗂️ ทั้งหมด</button>` +
+        categories.map(c => `<button onclick="filterMenu('${c}')" class="cat-btn bg-white text-gray-600 hover:bg-blue-50 hover:text-blue-600 px-5 py-2 rounded-full shadow-sm text-sm font-medium transition border border-gray-200 shrink-0">${getCategoryEmoji(c)} ${c}</button>`).join('');
 }
 
 function populateCategorySelects() {
@@ -1833,8 +1833,38 @@ async function fetchMenu() {
 }
 
 function getCategoryEmoji(category) {
-    const map = { 'สินค้าเดลิเวอรี่':'🛵', 'เครื่องดื่ม':'🥤', 'ขนม/ของว่าง':'🍪', 'ของใช้ในบ้าน':'🏠', 'อาหารแห้ง/เครื่องปรุง':'🧂', 'อาหารสด':'🥩', 'เบ็ดเตล็ด':'🛍️' };
-    return map[category] || '📦';
+    if (!category) return '📦';
+    // 1) ตรงตัวเป๊ะ
+    const exact = { 'สินค้าเดลิเวอรี่':'🛵', 'เครื่องดื่ม':'🥤', 'ขนม/ของว่าง':'🍪', 'ของใช้ในบ้าน':'🏠', 'อาหารแห้ง/เครื่องปรุง':'🧂', 'อาหารสด':'🥩', 'เบ็ดเตล็ด':'🛍️' };
+    if (exact[category]) return exact[category];
+    // 2) เดาจากคำในชื่อหมวด (รองรับหมวดที่ตั้งชื่อเอง)
+    const c = category.toLowerCase();
+    const rules = [
+        [['เดลิเวอรี','delivery'],'🛵'],
+        [['ขนม','ของว่าง','คุกกี้','ช็อก','snack','chocolate'],'🍪'], // เช็คก่อน "นม" เพราะ "ขนม" มี "นม" อยู่ในคำ
+        [['ไอศ','ไอติม','ice cream'],'🍦'],
+        [['กาแฟ','coffee'],'☕'],
+        [['เบียร์','เหล้า','สุรา','ไวน์','beer','alcohol'],'🍺'],
+        [['น้ำ','ดื่ม','นม','ชา','โซดา','อัดลม','drink','juice'],'🥤'],
+        [['ผลไม้','fruit'],'🍎'],
+        [['ผัก','vegetable'],'🥬'],
+        [['ไข่','egg'],'🥚'],
+        [['ข้าว','rice'],'🍚'],
+        [['เนื้อ','หมู','ไก่','ปลา','ทะเล','อาหารสด','meat','seafood'],'🥩'],
+        [['ปรุง','ซอส','น้ำปลา','เกลือ','sauce','seasoning'],'🧂'],
+        [['มาม่า','บะหมี่','เส้น','noodle'],'🍜'],
+        [['กระป๋อง','อาหารแห้ง','can'],'🥫'],
+        [['ทำความสะอาด','สบู่','ผงซักฟอก','น้ำยา','clean'],'🧴'],
+        [['กระดาษ','ทิชชู','tissue'],'🧻'],
+        [['ของใช้','บ้าน','home'],'🏠'],
+        [['ยา','เวชภัณฑ์','medicine'],'💊'],
+        [['บุหรี่','ยาสูบ','cigarette'],'🚬'],
+        [['เครื่องเขียน','ปากกา','ดินสอ','stationery'],'✏️'],
+        [['เด็ก','นมผง','ผ้าอ้อม','baby'],'🍼'],
+        [['สัตว์','หมา','แมว','pet'],'🐾'],
+    ];
+    for (const [keys, emo] of rules) { if (keys.some(k => c.includes(k.toLowerCase()))) return emo; }
+    return '📦';
 }
 
 function filterMenu(category) {
