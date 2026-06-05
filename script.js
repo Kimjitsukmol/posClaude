@@ -2083,6 +2083,7 @@ function quickCheckout() {
     const btnConfirm = document.getElementById('btnConfirmPay'); if(btnConfirm) { btnConfirm.disabled = false; btnConfirm.classList.remove('opacity-50','cursor-not-allowed'); }
     if (total > 0) { speak("ยอดรวม " + total + " บาท"); }
     if(typeof renderPaymentReceipt === 'function') renderPaymentReceipt();
+    resetConfirmPayLabel(); resetPayDisplay();
 }
 
 function openConfirmOrderModal() {
@@ -2385,6 +2386,7 @@ function openPayment(orderId) {
     const btnConfirm = document.getElementById('btnConfirmPay'); if(btnConfirm) { btnConfirm.disabled = false; btnConfirm.classList.remove('opacity-50','cursor-not-allowed'); }
     speak("ยอดรวม " + currentPayOrder.totalPrice + " บาท");
     if(typeof renderPaymentReceipt === 'function') renderPaymentReceipt();
+    resetConfirmPayLabel(); resetPayDisplay();
 }
 
 function addMoney(amount) { const input = document.getElementById('inputReceived'); input.value = Number(input.value) + amount; calcChange(); }
@@ -2403,8 +2405,25 @@ function calcChange() {
     const mainChangeText = document.getElementById('mainScreenChange');
     const mainTotalEl = document.getElementById('totalPrice');
     const modalTotalWrapper = document.getElementById('modalTotalWrapper');
-    if (inputEl.value !== '') { if(modalTotalWrapper) modalTotalWrapper.classList.add('scale-50','opacity-40','-translate-y-2'); }
-    else { if(modalTotalWrapper) modalTotalWrapper.classList.remove('scale-50','opacity-40','-translate-y-2'); }
+    // ── ช่องเดียว: ยังไม่กรอก/กรอกไม่พอ → "ยอดเงินที่ต้องชำระ" / กรอกพอแล้ว → "เงินทอน" (ขยายใหญ่ 1.5 เท่า) ──
+    const payLabel = document.getElementById('payDisplayLabel');
+    const payUnit  = document.getElementById('payDisplayUnit');
+    const numEl    = document.getElementById('modalTotalPay');
+    const wrap     = document.getElementById('modalTotalWrapper');
+    const setNum  = (cls) => { if(numEl){  numEl.classList.remove('text-blue-600','text-green-500'); numEl.classList.add(cls); } };
+    const setUnit = (cls) => { if(payUnit){ payUnit.classList.remove('text-blue-500','text-green-600'); payUnit.classList.add(cls); } };
+    if (received >= total && total > 0) {
+        if(payLabel) payLabel.innerText = 'เงินทอน';
+        if(numEl) numEl.innerText = change.toLocaleString();
+        setNum('text-green-500'); setUnit('text-green-600');
+        if(wrap) wrap.classList.add('scale-150'); // ขยายใหญ่กว่ายอดที่ต้องชำระ 0.5 เท่า
+    } else {
+        if(payLabel) payLabel.innerText = 'ยอดเงินที่ต้องชำระ';
+        if(numEl) numEl.innerText = total.toLocaleString();
+        setNum('text-blue-600'); setUnit('text-blue-500');
+        if(wrap) wrap.classList.remove('scale-150');
+    }
+
     if (mainChangeWrapper && mainChangeText) {
         if (received >= total && total > 0) {
             mainChangeWrapper.classList.remove('hidden','opacity-0','translate-y-4'); mainChangeWrapper.classList.add('flex','opacity-100','translate-y-0');
@@ -2416,12 +2435,13 @@ function calcChange() {
         }
     }
     if (received >= total && total > 0) {
-        if(modalChangeBox) { modalChangeBox.classList.remove('opacity-0','translate-y-2'); modalChangeBox.innerHTML = `<div class="flex flex-col items-center justify-center w-full animate-fade-in text-center transform scale-110 transition-transform duration-500"><span class="text-green-600 text-sm font-bold tracking-wide mb-1">เงินทอน</span><div class="flex items-baseline justify-center gap-2"><span class="text-green-500 text-7xl font-black drop-shadow-md">${change.toLocaleString()}</span><span class="text-green-600 text-4xl font-extrabold">฿</span></div></div>`; }
         clearTimeout(ttsTimer); ttsTimer = setTimeout(() => { if(change > 0) speak("รับเงิน " + received + " บาท เงินทอน " + change + " บาท"); }, 800);
-    } else { if(modalChangeBox) { modalChangeBox.classList.add('opacity-0','translate-y-2'); modalChangeBox.innerHTML = ''; } }
+    }
     if(btn) { btn.disabled = false; btn.classList.remove('opacity-50','cursor-not-allowed'); }
     if(received >= total) { inputEl.classList.replace('border-blue-500','border-green-500'); inputEl.classList.replace('text-blue-600','text-green-600'); }
     else { inputEl.classList.replace('border-green-500','border-blue-500'); inputEl.classList.replace('text-green-600','text-blue-600'); }
+    // เปลี่ยนข้อความปุ่มตามว่ามีการรับเงินสดหรือไม่
+    if (received > 0 && total > 0) setConfirmPayLabel('ยืนยันรับเงินสด'); else resetConfirmPayLabel();
     if(typeof updateSlipChange === 'function') updateSlipChange();
 }
 
@@ -3589,6 +3609,12 @@ async function executeExportPDF() {
 // ============================================================
 function renderPaymentReceipt() {
     const container = document.getElementById('paymentReceiptItems'); if(!container) return;
+    // เติมชื่อร้าน/ที่อยู่/ข้อความท้ายบิล จากการตั้งค่าร้าน
+    getShopInfo().then(info => {
+        const n = document.getElementById('slipShopName'); if (n) n.innerText = info.name || 'ร้านค้า';
+        const a = document.getElementById('slipShopAddr'); if (a) a.innerText = info.address || '';
+        const f = document.getElementById('slipFooter');   if (f) f.innerText = info.footer || 'ขอบคุณที่ใช้บริการ';
+    });
     const dateEl = document.getElementById('slipDate'); const orderNoEl = document.getElementById('slipOrderNo'); const now = new Date();
     if(dateEl) dateEl.innerText = now.toLocaleDateString('th-TH',{year:'numeric',month:'2-digit',day:'2-digit'}) + ' ' + now.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     if(orderNoEl) orderNoEl.innerText = currentPayOrder&&currentPayOrder.orderId ? currentPayOrder.orderId : ("W-"+Math.floor(Math.random()*100000));
@@ -3613,6 +3639,29 @@ function updateSlipChange() {
     recvEl.innerText = (received===0 ? "0.00" : received.toLocaleString('th-TH',{minimumFractionDigits:2}));
     let change = received - total; if(change<0||received===0) change = 0;
     changeEl.innerText = change.toLocaleString('th-TH',{minimumFractionDigits:2});
+}
+
+// ── ปรับข้อความปุ่มหลักของหน้าชำระเงิน ──
+function resetConfirmPayLabel() {
+    const lbl = document.getElementById('btnConfirmPayLabel');
+    if (lbl) lbl.innerText = 'ปิดบิล';
+}
+function setConfirmPayLabel(text) {
+    const lbl = document.getElementById('btnConfirmPayLabel');
+    if (lbl) lbl.innerText = text;
+}
+
+// ── รีเซ็ตช่องแสดงผลให้กลับไปโชว์ "ยอดเงินที่ต้องชำระ" (สีน้ำเงิน) ──
+function resetPayDisplay() {
+    const total = currentPayOrder ? (currentPayOrder.totalPrice || 0) : 0;
+    const payLabel = document.getElementById('payDisplayLabel');
+    const payUnit  = document.getElementById('payDisplayUnit');
+    const numEl    = document.getElementById('modalTotalPay');
+    const wrap     = document.getElementById('modalTotalWrapper');
+    if (payLabel) payLabel.innerText = 'ยอดเงินที่ต้องชำระ';
+    if (numEl)  { numEl.innerText = total.toLocaleString(); numEl.classList.remove('text-green-500','text-red-500'); numEl.classList.add('text-blue-600'); }
+    if (payUnit){ payUnit.classList.remove('text-green-600','text-red-500'); payUnit.classList.add('text-blue-500'); }
+    if (wrap) wrap.classList.remove('scale-150');
 }
 
 // ============================================================

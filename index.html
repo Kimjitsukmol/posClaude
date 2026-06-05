@@ -414,105 +414,126 @@
     </div>
     
     <div id="paymentModal" class="fixed inset-0 z-[100] bg-black/60 hidden flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onclick="if(event.target === this) closeModal('paymentModal')">
-        
-        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden animate-pop relative flex flex-col max-h-[90vh]">
-            
-            <div id="modalHeader" class="bg-gradient-to-r from-blue-500 to-blue-400 p-4 text-white flex justify-between items-center shrink-0 shadow-sm">
-                <h3 class="font-bold text-lg"><i class="fas fa-hand-holding-usd mr-2"></i>รับเงิน</h3>
-                <button onclick="closeModal('paymentModal')" class="bg-white/20 hover:bg-white/30 rounded-full w-8 h-8 flex items-center justify-center transition shadow-sm"><i class="fas fa-times"></i></button>
-            </div>
-            
-            <div class="flex flex-col md:flex-row flex-1 overflow-hidden">
-                
-                <div class="hidden md:flex w-full md:w-[40%] bg-gray-100 relative flex-col items-center p-4 border-r border-gray-200 overflow-y-auto custom-scrollbar">
-                    
-                    <div class="bg-white w-full max-w-[280px] text-gray-800 text-[11px] shadow-sm p-4 pb-6 relative font-mono mx-auto">
-                        <div class="text-center mb-3">
-                            <h3 class="font-bold text-[14px]">ร้านเจ้พินขายของชำ</h3>
-                            <p>29/30 บ่อวิน ศรีราชา ชลบุรี 20230</p>
-                            <p class="mt-2 font-bold text-[13px]">ใบเสร็จรับเงิน</p>
-                        </div>
-                        
-                        <div class="mb-2 space-y-0.5">
-                            <div class="flex gap-2"><span>เลขที่:</span> <span id="slipOrderNo">...</span></div>
-                            <div class="flex gap-2"><span>วันที่:</span> <span id="slipDate">...</span></div>
-                        </div>
-                        
-                        <div class="border-t border-b border-gray-800 py-1 mb-2 flex font-bold">
-                            <div class="flex-1 text-center">รายการ</div>
-                            <div class="w-14 text-right">หน่วยละ</div>
-                            <div class="w-16 text-right">รวมเงิน</div>
-                        </div>
-                        
-                        <div id="paymentReceiptItems" class="space-y-1.5 mb-2 min-h-[50px]"></div>
-                        
-                        <div class="border-t border-gray-800 pt-1 pb-1">
-                            <div class="flex gap-4">
-                                <span>รายการ: <span id="slipItemCount">0</span></span>
-                                <span>จำนวนชิ้น: <span id="slipTotalQty">0</span></span>
-                            </div>
-                        </div>
-                        <div class="border-t border-gray-800 pt-1 space-y-1">
-                            <div class="flex justify-between font-bold">
-                                <span>รวมเป็นเงิน</span>
-                                <span id="paymentReceiptTotal">0.00</span>
-                            </div>
-                            <div class="flex justify-between font-bold text-[13px] mt-1">
-                                <span>รวมทั้งสิ้น</span>
-                                <span id="paymentReceiptTotal2">0.00</span>
-                            </div>
-                        </div>
-                        
-                        <div class="border-t border-gray-800 pt-1 mt-2 flex justify-between">
-                            <span>รับเงิน <span id="slipReceived">0.00</span></span>
-                            <span>เงินทอน <span id="slipChange">0.00</span></span>
-                        </div>
-                        
-                        <div class="text-center mt-6 pt-2">
-                            <p>ขอบคุณที่ใช้บริการ</p>
-                        </div>
 
-                        <div class="absolute bottom-0 left-0 right-0 h-2 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxwb2x5Z29uIGZpbGw9IiNmM2Y0ZjYiIHBvaW50cz0iMCA4IDQgMCA4IDgiLz48L3N2Zz4=')]"></div>
+        <div class="bg-gray-50 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden animate-pop relative flex flex-col max-h-[92vh]">
+
+            <!-- ── Header ── -->
+            <div id="modalHeader" class="bg-gradient-to-r from-blue-600 to-blue-400 px-5 py-3.5 text-white flex justify-between items-center shrink-0 shadow-sm relative">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center shadow-inner shrink-0"><i class="fas fa-hand-holding-usd text-lg"></i></div>
+                    <div>
+                        <h3 class="font-bold text-lg leading-tight">ชำระเงิน</h3>
+                        <p class="text-[11px] text-blue-100 leading-tight">สแกน QR Code เพื่อชำระเงิน</p>
+                    </div>
+                </div>
+                <!-- ช่องรับเงินสด (อยู่กึ่งกลางแถบสีน้ำเงิน) -->
+                <div class="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/15 rounded-xl px-3 py-1.5 backdrop-blur-sm">
+                    <span class="text-[11px] font-bold text-blue-50 whitespace-nowrap"><i class="fas fa-money-bill-wave mr-1"></i>รับเงินสด</span>
+                    <input type="text" id="inputReceived" inputmode="none" oninput="this.value = this.value.replace(/[^0-9]/g, ''); calcChange()" onkeydown="checkPaymentEnter(event)" class="w-24 text-center text-base font-bold rounded-lg py-1 px-2 text-blue-600 bg-white placeholder-gray-300 outline-none focus:ring-2 focus:ring-white/60" placeholder="0">
+                </div>
+                <button onclick="closeModal('paymentModal')" class="bg-white/20 hover:bg-white/30 rounded-full w-9 h-9 flex items-center justify-center transition shadow-sm"><i class="fas fa-times"></i></button>
+            </div>
+
+            <!-- ── Body ── -->
+            <div class="flex flex-col md:flex-row flex-1 overflow-y-auto custom-scrollbar p-4 gap-4">
+
+                <!-- ── LEFT: ใบเสร็จ ── -->
+                <div class="w-full md:w-[42%] shrink-0">
+                    <div class="bg-white rounded-xl shadow-md text-gray-800 text-[11px] relative font-mono mx-auto max-w-[330px] overflow-hidden">
+                        <div class="p-5 pt-4">
+                            <div class="text-center mb-3">
+                                <div class="w-12 h-12 mx-auto rounded-full bg-blue-50 text-blue-500 flex items-center justify-center text-xl mb-2"><i class="fas fa-hands-praying"></i></div>
+                                <h3 class="font-bold text-[15px]" id="slipShopName">ร้านค้า</h3>
+                                <p id="slipShopAddr" class="text-gray-500"></p>
+                                <p class="mt-2 font-bold text-[13px]">ใบเสร็จรับเงิน</p>
+                            </div>
+
+                            <div class="mb-2 space-y-0.5">
+                                <div class="flex gap-2"><span>เลขที่:</span> <span id="slipOrderNo">...</span></div>
+                                <div class="flex gap-2"><span>วันที่:</span> <span id="slipDate">...</span></div>
+                            </div>
+
+                            <div class="border-t border-b border-gray-800 py-1 mb-2 flex font-bold">
+                                <div class="flex-1 text-center">รายการ</div>
+                                <div class="w-14 text-right">หน่วยละ</div>
+                                <div class="w-16 text-right">รวมเงิน</div>
+                            </div>
+
+                            <div id="paymentReceiptItems" class="space-y-1.5 mb-2 min-h-[50px]"></div>
+
+                            <div class="border-t border-gray-800 pt-1 pb-1">
+                                <div class="flex gap-4">
+                                    <span>รายการ: <span id="slipItemCount">0</span></span>
+                                    <span>จำนวนชิ้น: <span id="slipTotalQty">0</span></span>
+                                </div>
+                            </div>
+                            <div class="border-t border-gray-800 pt-1 space-y-1">
+                                <div class="flex justify-between font-bold">
+                                    <span>รวมเป็นเงิน</span>
+                                    <span id="paymentReceiptTotal">0.00</span>
+                                </div>
+                                <div class="flex justify-between font-bold text-[13px] mt-1 text-blue-600">
+                                    <span>รวมทั้งสิ้น</span>
+                                    <span id="paymentReceiptTotal2">0.00</span>
+                                </div>
+                            </div>
+
+                            <div class="border-t border-gray-800 pt-1 mt-2 flex justify-between">
+                                <span>รับเงิน <span id="slipReceived">0.00</span></span>
+                                <span>เงินทอน <span id="slipChange">0.00</span></span>
+                            </div>
+
+                            <div class="text-center mt-5 pt-2 text-gray-500">
+                                <p id="slipFooter">ขอบคุณที่ใช้บริการ</p>
+                            </div>
+                        </div>
+                        <!-- ขอบกระดาษหยัก -->
+                        <div class="h-2 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxwb2x5Z29uIGZpbGw9IiNmZmZmZmYiIHBvaW50cz0iMCAwIDQgOCA4IDAiLz48L3N2Zz4=')] bg-repeat-x"></div>
                     </div>
                 </div>
 
-                <div class="w-full md:w-[60%] p-6 bg-white relative flex flex-col h-full overflow-y-auto custom-scrollbar">
-                    <div id="quickPayTableNoContainer" class="hidden"><input type="text" id="quickPayTableNo"></div>
-                    
-                    <div id="modalChangeBox" class="opacity-0 transform translate-y-2 transition-all duration-300 w-full mb-3 shrink-0"></div>
+                <!-- ── RIGHT: QR + ยอดเงิน + นับถอยหลัง + เงินสด ── -->
+                <div class="w-full md:flex-1 flex flex-col gap-3">
 
-                    <div class="bg-gray-50 p-2 rounded-xl border border-gray-100 text-center mb-4 relative group-qr shrink-0">
-                        <button onclick="togglePaymentMenu()" class="absolute top-3 right-3 z-20 w-8 h-8 bg-white/90 hover:bg-white rounded-full text-gray-500 hover:text-blue-500 shadow-md flex items-center justify-center transition backdrop-blur-sm border border-gray-200"><i class="fas fa-ellipsis-v"></i></button>
-                        
-                        <div id="paymentSettingsMenu" class="hidden absolute top-12 right-3 z-30 bg-white shadow-xl rounded-xl border border-gray-100 p-1.5 w-44 flex flex-col gap-1 animate-pop origin-top-right">
+                    <input type="text" id="quickPayTableNo" class="hidden">
+                    <div id="quickPayTableNoContainer" class="hidden"></div>
+
+                    <!-- QR card -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 text-center relative">
+                        <button onclick="togglePaymentMenu()" class="absolute top-3 right-3 z-20 w-8 h-8 bg-gray-50 hover:bg-white rounded-full text-gray-500 hover:text-blue-500 shadow-sm flex items-center justify-center transition border border-gray-200"><i class="fas fa-ellipsis-v"></i></button>
+                        <div id="paymentSettingsMenu" class="hidden absolute top-12 right-3 z-30 bg-white shadow-xl rounded-xl border border-gray-100 p-1.5 w-44 flex flex-col gap-1 animate-pop origin-top-right text-left">
                             <button onclick="openPromptPayModal(); togglePaymentMenu()" class="text-left text-xs font-bold text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition flex items-center"><i class="fas fa-cog w-6 text-center mr-1"></i> ตั้งค่าพร้อมเพย์</button>
                             <button onclick="checkAndUseOriginalQR(); togglePaymentMenu()" class="text-left text-xs font-bold text-gray-600 hover:bg-gray-100 p-2 rounded-lg transition flex items-center"><i class="fas fa-image w-6 text-center mr-1"></i> ใช้รูปเดิม</button>
                             <div class="h-px bg-gray-100 my-0.5"></div>
                             <button onclick="document.getElementById('bankQRInput').click(); togglePaymentMenu()" class="text-left text-xs font-bold text-gray-500 hover:bg-gray-100 p-2 rounded-lg transition flex items-center"><i class="fas fa-upload w-6 text-center mr-1"></i> อัปโหลดรูปใหม่</button>
                         </div>
-                        
-                        <div class="relative overflow-hidden rounded-lg bg-white h-48 flex items-center justify-center cursor-pointer group shadow-inner" onclick="handleQRClick()">
-                            <img id="bankQRImage" src="" class="h-full w-auto object-contain p-2" alt="QR">
-                            <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><span class="text-white text-xs font-bold"><i class="fas fa-expand"></i> ดูรูปเต็ม</span></div>
+
+                        <h4 class="font-bold text-gray-800 text-base mb-3">สแกน QR Code เพื่อชำระเงิน</h4>
+
+                        <div class="relative w-64 h-64 sm:w-80 sm:h-80 mx-auto rounded-2xl bg-white flex items-center justify-center cursor-pointer group ring-1 ring-gray-100 shadow-inner" onclick="handleQRClick()">
+                            <img id="bankQRImage" src="" class="w-full h-full object-contain p-2" alt="QR">
+                            <div class="absolute bottom-2 right-2 w-9 h-9 bg-white/90 rounded-full shadow flex items-center justify-center text-blue-500 group-hover:scale-110 transition"><i class="fas fa-search-plus text-sm"></i></div>
                         </div>
+
                         <input type="file" id="bankQRInput" class="hidden" accept="image/*" onchange="uploadBankQRFile(this)">
                     </div>
-                    
-                    <div id="modalTotalWrapper" class="flex justify-center items-baseline gap-2 mb-4 w-full transition-all duration-500 ease-out origin-top shrink-0 mt-auto">
-                        <span id="modalTotalPay" class="text-5xl sm:text-6xl font-black text-blue-500 drop-shadow-md">0</span>
-                        <span class="text-2xl sm:text-3xl font-extrabold text-blue-600">฿</span>
-                    </div>
 
-                    <div class="mb-4 relative text-center shrink-0">
-                        <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wide">ยอดเงินที่รับ</label>
-                        <div class="relative">
-                            <input type="text" id="inputReceived" inputmode="none" oninput="this.value = this.value.replace(/[^0-9]/g, ''); calcChange()" onkeydown="checkPaymentEnter(event)" class="w-2/3 mx-auto block text-xl font-bold text-center border-2 border-blue-400 rounded-xl py-2 px-3 text-blue-600 placeholder-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-300 outline-none transition-all shadow-inner bg-blue-50" placeholder="0">
+                    <!-- ช่องเดียว: ยอดที่ต้องชำระ / เงินทอน (สลับตามการกรอกเงินสด) -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 text-center">
+                        <p id="payDisplayLabel" class="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1 transition-colors">ยอดเงินที่ต้องชำระ</p>
+                        <div id="modalTotalWrapper" class="flex justify-center items-baseline gap-1.5 transition-all duration-300">
+                            <span id="modalTotalPay" class="text-5xl sm:text-6xl font-black text-blue-600 drop-shadow-sm">0</span>
+                            <span id="payDisplayUnit" class="text-2xl sm:text-3xl font-extrabold text-blue-500">฿</span>
                         </div>
                     </div>
-                    
-                    <button onclick="confirmPayment()" id="btnConfirmPay" class="w-full mx-auto block bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-xl text-lg shadow-lg transition transform active:scale-95 shrink-0">ยืนยันรับเงิน</button>
-                    <!-- สถานะ + toggle ปริ้นอัตโนมัติ -->
-                    <div class="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 mt-2">
+                    <!-- (กล่องเงินทอนเดิมถูกยุบรวมเข้ากับการ์ดด้านบนแล้ว) -->
+                    <div id="modalChangeBox" class="hidden"></div>
+
+                    <!-- ปุ่มหลัก: ปิดบิล -->
+                    <button onclick="confirmPayment()" id="btnConfirmPay" class="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold py-3.5 rounded-2xl text-base shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2"><i class="fas fa-clipboard-check"></i> <span id="btnConfirmPayLabel">ปิดบิล</span></button>
+
+                    <!-- สถานะเครื่องพิมพ์ -->
+                    <div class="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-2">
                         <div class="flex items-center gap-2 text-xs text-gray-500">
                             <span id="printerStatusDot2" class="w-2 h-2 rounded-full bg-gray-300"></span>
                             <span id="printerStatusText2" class="text-[11px]">เครื่องปริ้นยังไม่เชื่อมต่อ</span>
